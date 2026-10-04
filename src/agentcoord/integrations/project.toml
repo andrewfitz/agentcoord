@@ -1,0 +1,3 @@
+# agentcoord discovers this canonical Git workspace and keeps private state
+# outside the checkout. Harness and service activation are separate steps.
+# Optional settings use [limits], [native.executables] and [version].

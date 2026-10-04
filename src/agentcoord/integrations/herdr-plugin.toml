@@ -1,0 +1,18 @@
+id = "agentcoord"
+name = "Agent Coordination"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Inspect native work, actions and durable coordination history"
+platforms = ["macos", "linux"]
+
+[[actions]]
+id = "open"
+title = "Agent coordination: open monitor"
+contexts = ["global", "workspace", "pane"]
+command = ["/bin/sh", "herdr.sh", "open"]
+
+[[panes]]
+id = "monitor"
+title = "Agent Coordination"
+placement = "tab"
+command = ["/bin/sh", "herdr.sh", "monitor"]

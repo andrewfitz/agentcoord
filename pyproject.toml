@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentcoord"
+version = "0.1.0"
+description = "Native coordination for agents sharing a local Git workspace"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["mcp==2.2.0"]
+classifiers = [
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+agentcoord = "agentcoord.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agentcoord*"]
+
+[tool.setuptools.package-data]
+agentcoord = ["integrations/**/*", "integrations/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py311"
