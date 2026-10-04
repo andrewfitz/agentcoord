@@ -93,9 +93,13 @@ sessions are never terminated by service installation or upgrade.
 
 `init` writes optional project configuration and narrowly marked instruction
 snippets, preserving existing user content. `init --candidate-dir PATH` produces
-inert MCP/lifecycle/Herdr fragments for review. Merge them deliberately and reload
-the harness at a natural boundary. Native CLI remains available while an existing
-MCP client retains its old discovered tool catalog.
+inert MCP/lifecycle/Herdr fragments for review. Review full lifecycle hook
+definitions, approve changed definitions through the harness's native hook-trust
+mechanism, and confirm the actual client loaded and ran them; parsed configuration
+alone is not proof. After the authority switch, existing
+MCP sessions use the installed `agentcoord` CLI with `--project /absolute/repository`
+until a natural reconnect refreshes their catalog; never invoke cached retired
+tools. Do not inject terminal input or force-restart agent sessions.
 
 macOS supports per-workspace launchd units. Linux supports an independently usable
 foreground service with `agentcoord serve`. Managed restart/removal requires the
