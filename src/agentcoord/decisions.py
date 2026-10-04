@@ -400,6 +400,7 @@ def route_due(tx, context, *, limit=20):
 def _pending_query(context, now_us, *, new_only=False, filters=None):
     filters = messages.pending_filters(filters)
     if context.operator:
+        candidates, source = "", "decisions d"
         involved = "d.state='open'"
         notice = "EXISTS (SELECT 1 FROM decision_notifications n JOIN recipients r ON r.message_id=n.message_id WHERE n.decision_id=d.id AND r.handled_us IS NULL)"
         followed = "EXISTS (SELECT 1 FROM followers f WHERE f.decision_id=d.id AND f.active=1)"
@@ -409,6 +410,18 @@ def _pending_query(context, now_us, *, new_only=False, filters=None):
              WHERE n.decision_id=d.id AND r.handled_us IS NULL),
             (SELECT MIN(f.actor_id) FROM followers f WHERE f.decision_id=d.id AND f.active=1)) END"""
     else:
+        # Bound actor views before the cross-table visibility predicate. UNION
+        # deduplicates records reached through several authorized routes.
+        candidates = """WITH relevant(id) AS (
+            SELECT id FROM decisions WHERE sender_id=:actor AND state='open'
+            UNION SELECT id FROM decisions WHERE recipient_id=:actor AND state='open'
+            UNION SELECT id FROM decisions WHERE parent_id=:actor
+                AND routing_state='escalated' AND state='open'
+            UNION SELECT n.decision_id FROM recipients r JOIN decision_notifications n
+                ON n.message_id=r.message_id WHERE r.actor_id=:actor AND r.handled_us IS NULL
+            UNION SELECT decision_id FROM followers WHERE actor_id=:actor AND active=1
+        ) """
+        source = "relevant v JOIN decisions d ON d.id=v.id"
         involved = """(d.state='open' AND (d.sender_id=:actor OR ((d.recipient_id=:actor OR
             (d.parent_id=:actor AND d.routing_state='escalated')) AND
             (defer.until_us IS NULL OR defer.until_us<=:now OR d.deadline_us<=:now))))"""
@@ -419,7 +432,7 @@ def _pending_query(context, now_us, *, new_only=False, filters=None):
         owner = ":actor"
     # Named parameters permit one predicate to serve selection and exact counts.
     values = {"actor": context.actor_id, "now": now_us}
-    sql = f"""SELECT d.id,d.sender_id,d.recipient_id,d.recipient_task_generation,d.parent_id,
+    sql = candidates + f"""SELECT d.id,d.sender_id,d.recipient_id,d.recipient_task_generation,d.parent_id,
         d.parent_task_generation,d.subject,d.state,d.routing_state,d.deadline_us,d.version,d.sequence,
         {kind} AS action_kind,{owner} AS actor_id,
         recipient.current_task_generation AS current_recipient_generation,
@@ -427,7 +440,7 @@ def _pending_query(context, now_us, *, new_only=False, filters=None):
         presence.observed_state AS recipient_presence,
         EXISTS (SELECT 1 FROM followers f JOIN actors a ON a.id=f.actor_id
             WHERE f.decision_id=d.id AND f.active=1 AND f.actor_id={owner}
-              AND f.task_generation!=a.current_task_generation) AS stale_follow FROM decisions d
+              AND f.task_generation!=a.current_task_generation) AS stale_follow FROM {source}
         JOIN actors recipient ON recipient.id=d.recipient_id
         LEFT JOIN presence ON presence.actor_id=d.recipient_id
         LEFT JOIN deferrals defer ON defer.decision_id=d.id WHERE ({involved} OR {notice} OR {followed})"""

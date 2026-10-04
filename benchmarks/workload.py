@@ -225,6 +225,61 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+class ProfileObserver:
+    """Bound exact observations without adding profile-file I/O to dispatch."""
+
+    def __init__(self, phase_path, capacity):
+        if type(capacity) is not int or capacity <= 0:
+            raise ValueError("Profile capacity must be a positive integer")
+        self.phase_path = phase_path
+        self.capacity = capacity
+        self.lock = threading.Lock()
+        self.rows = []
+        self.calls = Counter()
+        self.dropped_rows = 0
+        self.flushed = False
+        self.flush_error = None
+
+    def invoke(self, execute, context, call):
+        current = self.phase_path.read_text().strip()
+        start = time.perf_counter()
+        result = execute(context,call)
+        row = {"phase":current,"operation":call.operation,"service_ms":(time.perf_counter()-start)*1000,
+               "ok":result.get("ok") is True}
+        with self.lock:
+            self.calls[current] += 1
+            if len(self.rows) < self.capacity:
+                self.rows.append(row)
+            else:
+                self.dropped_rows += 1
+        return result
+
+    def flush(self, path):
+        """Called only after the real factory closes and joins its handlers."""
+        with self.lock:
+            rows = list(self.rows)
+        temporary = path.with_suffix(".buffer.tmp")
+        try:
+            with temporary.open("w") as output:
+                for row in rows:
+                    output.write(json.dumps(row)+"\n")
+            temporary.replace(path)
+        except OSError as error:
+            self.flush_error = {"type":type(error).__name__,"message":str(error)[:2000]}
+        else:
+            self.flushed = True
+
+    def snapshot(self, *, final=False):
+        with self.lock:
+            result = {"capacity":self.capacity,"recorded_rows":len(self.rows),"calls":dict(self.calls),
+                      "dropped_rows":self.dropped_rows,"flushed":self.flushed,"flush_error":self.flush_error}
+            result["ok"] = (self.flushed and not self.dropped_rows and self.flush_error is None
+                            and sum(self.calls.values())==len(self.rows))
+            if final and (self.dropped_rows or self.flush_error is not None):
+                result["retained_rows"] = list(self.rows)
+            return result
+
+
 def server_process(spec_path):
     """Profile the real application factory in its own owned process."""
     import urllib.request
@@ -242,7 +297,7 @@ def server_process(spec_path):
     stopped = threading.Event()
     lock = threading.Lock()
     counters = Counter()
-    calls = Counter()
+    observer = ProfileObserver(phase_path,spec["profile_capacity"])
     handler_errors = []
     children = []
     peak_live_children = 0
@@ -250,16 +305,7 @@ def server_process(spec_path):
     def phase():
         return phase_path.read_text().strip()
     def profiled(context, call):
-        current = phase()
-        start = time.perf_counter()
-        result = execute(context,call)
-        row = {"phase":current,"operation":call.operation,"service_ms":(time.perf_counter()-start)*1000,
-               "ok":result.get("ok") is True}
-        with lock:
-            calls[current] += 1
-            with profile.open("a") as output:
-                output.write(json.dumps(row)+"\n")
-        return result
+        return observer.invoke(execute,context,call)
     service.execute = profiled
     popen = subprocess.Popen
     urlopen = urllib.request.urlopen
@@ -291,15 +337,17 @@ def server_process(spec_path):
         server.handle_error = observed_handle_error
         thread = threading.Thread(target=server.serve_forever,daemon=True)
         thread.start()
-        def snapshot():
+        def snapshot(*, final=False):
+            profile_state = observer.snapshot(final=final)
+            call_counts = profile_state["calls"]
             with lock:
-                counts = {key:{kind:counters[(key,kind)] for kind in ("subprocess","http")} for key in calls}
-                call_counts = dict(calls)
+                counts = {key:{kind:counters[(key,kind)] for kind in ("subprocess","http")} for key in call_counts}
                 observed_errors = list(handler_errors)
                 live_children = sum(child.poll() is None for child in children)
             atomic_json(stats,{"pid":os.getpid(),"usage":process_usage(),"calls":call_counts,
                                "effects":counts,"health":server.health(),
                                "handler_errors":observed_errors,
+                               "profile_observer":profile_state,
                                "source_sha256":source_hashes,
                                "live_child_processes":live_children,"peak_live_child_processes":peak_live_children,
                                "live_threads":threading.active_count()})
@@ -311,7 +359,8 @@ def server_process(spec_path):
             thread.join(10)
             snapshot()
     # Closing the real factory joins connection handlers; retain late unbind errors.
-    snapshot()
+    observer.flush(profile)
+    snapshot(final=True)
     return 0
 
 
@@ -375,7 +424,9 @@ def workload(*, output, clients=100, operations_per_client=10, warm_operations=1
         stats_path = scratch/"service-stats.json"
         spec_path = scratch/"server-spec.json"
         atomic_json(spec_path,{"workspace_id":workspace.id,"state_root":str(scratch/"state"),"phase":str(phase_path),
-                              "profile":str(profile_path),"stats":str(stats_path)})
+                              "profile":str(profile_path),"stats":str(stats_path),
+                              "profile_capacity":warm_operations+(3 if smoke else 30)+clients*operations_per_client*2
+                                  +min(4,clients)*3+4096})
         source_root = Path(application.__file__).resolve().parent
         report["source_sha256"] = {path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.glob("*.py")}
         report["benchmark_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -635,6 +686,7 @@ def workload(*, output, clients=100, operations_per_client=10, warm_operations=1
                             and phases.get("overload",{}).get("rejected",{}).get("SERVICE_BUSY",0)>0
                             and set(phases.get("overload",{}).get("rejected",{}))=={"SERVICE_BUSY"}
                             and not report.get("service_resources",{}).get("handler_errors")
+                            and report.get("service_resources",{}).get("profile_observer",{}).get("ok") is True
                             and routine_effects.get("subprocess",0)==0 and routine_effects.get("http",0)==0)
             report["acceptance"] = {"complete_workload":not smoke and clients==100 and operations_per_client>=10
                                       and phases.get("warm",{}).get("operations",0)>=1000
