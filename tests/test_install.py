@@ -233,7 +233,29 @@ def test_herdr_action_opens_declared_monitor_pane_with_exact_workspace(layout, t
     assert json.loads(result.stdout) == ["plugin", "pane", "open", "--plugin", manifest["id"],
                                         "--entrypoint", pane["id"], "--placement", pane["placement"],
                                         "--workspace", "exact-herdr-workspace", "--cwd", str(workspace.root), "--focus"]
-    assert pane["command"] == ["/bin/sh", "herdr.sh", "monitor"]
+
+
+def test_herdr_monitor_uses_plugin_root_from_selected_project_cwd(layout, tmp_path):
+    workspace, _, _ = layout
+    executable = tmp_path / "agentcoord with spaces"
+    executable.write_text(f"#!{sys.executable}\nimport json,os,sys\nprint(json.dumps({{'argv':sys.argv[1:],'cwd':os.getcwd(),'project':os.environ['AGENTCOORD_WORKSPACE']}}))\n")
+    executable.chmod(0o700)
+    destination = tmp_path / "herdr candidates"
+    install.generate_candidates(workspace.root, destination, executable=str(executable))
+    manifest = tomllib.loads((destination / "herdr-plugin.toml").read_text())
+    env = dict(os.environ, HERDR_PLUGIN_ROOT=str(destination), HERDR_WORKSPACE_ID="selected-workspace",
+               HERDR_PLUGIN_CONTEXT_JSON=json.dumps({"workspace_id": "selected-workspace", "workspace_cwd": str(workspace.root)}))
+    result = subprocess.run(manifest["panes"][0]["command"], cwd=workspace.root, env=env,
+                            text=True, capture_output=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"argv": ["--project", str(workspace.root), "monitor"],
+                                      "cwd": str(workspace.root), "project": str(workspace.root)}
+    env.pop("HERDR_PLUGIN_ROOT")
+    missing = subprocess.run(manifest["panes"][0]["command"], cwd=workspace.root, env=env,
+                             text=True, capture_output=True, timeout=10, check=False)
+    assert missing.returncode != 0
+    assert "HERDR_PLUGIN_ROOT is required" in missing.stderr
+    assert not missing.stdout
 
 
 def test_herdr_action_missing_workspace_fails_before_any_launch(layout, tmp_path):

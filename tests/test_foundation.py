@@ -1,6 +1,7 @@
 """Native authority, durable receipts and private workspace/store boundaries."""
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import subprocess
@@ -595,3 +596,41 @@ def test_required_regular_file_readers_reject_fifo_without_writer(tmp_path, read
     else:
         assert isinstance(result.get("error"), CoordinationError), result
         assert result["error"].code == "INVALID_ARGUMENT"
+
+
+def test_public_actor_views_do_not_expand_imported_history(system):
+    service, binding = system
+    context = binding["context"]
+    proof = {"pid": 123, "pgid": 123, "started": "1700000000.000001", "source": "darwin-libproc"}
+    history = [{"note": "private imported history " * 100, "sequence": i} for i in range(1000)]
+    metadata = {"legacy": {"activity_history": history, "shared_activity_history": history}}
+    with service.store.write() as tx:
+        tx.connection.execute(
+            "UPDATE actors SET metadata_json=?,checkpoint_json=?,process_identity_json=? WHERE id=?",
+            (canonical_json(metadata), canonical_json({"note": "old checkpoint " * 4000}),
+             canonical_json(proof), context.actor_id),
+        )
+    started, context = start(system, "public-view-run")
+    generation = started["execution_generation"]
+    forbidden = {"metadata", "metadata_json", "checkpoint", "checkpoint_json", "process_identity_json"}
+    replies = [invoke(system, "identity.get", context=context)]
+    replies.append(checkpoint(system, note="current checkpoint", context=context))
+    replies.append(invoke(system, "identity.complete", {"note": "complete"}, key=uid(), context=context))
+    for reply in replies:
+        assert reply["ok"]
+        actor = reply["data"]["actor"]
+        assert not forbidden.intersection(actor)
+        assert actor["id"] == context.actor_id
+        assert actor["current_task_generation"] == context.task_generation
+        assert actor["current_execution_generation"] == generation
+        assert actor["process_identity"] == proof
+        assert actor["resume_enabled"] is False
+        assert len(canonical_json(reply).encode()) < 4000
+    status = invoke(system, "identity.status", {"all": True}, context=context)
+    assert status["ok"]
+    assert len(canonical_json(status).encode()) < 4000
+    assert not forbidden.intersection(status["data"]["actors"][0])
+    with service.store.read() as tx:
+        stored = tx.connection.execute("SELECT metadata_json,checkpoint_json FROM actors WHERE id=?", (context.actor_id,)).fetchone()
+        assert json.loads(stored["metadata_json"]) == metadata
+        assert json.loads(stored["checkpoint_json"]) == {"note": "complete"}

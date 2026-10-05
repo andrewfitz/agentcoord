@@ -15,4 +15,4 @@ command = ["/bin/sh", "herdr.sh", "open"]
 id = "monitor"
 title = "Agent Coordination"
 placement = "tab"
-command = ["/bin/sh", "herdr.sh", "monitor"]
+command = ["/bin/sh", "-c", 'exec /bin/sh "${HERDR_PLUGIN_ROOT:?HERDR_PLUGIN_ROOT is required}/herdr.sh" monitor']

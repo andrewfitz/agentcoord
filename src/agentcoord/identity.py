@@ -77,6 +77,17 @@ def _actor(tx, actor_id: str) -> dict:
     return result
 
 
+def _actor_view(actor: dict) -> dict:
+    """Expose native authority and state without private storage/history fields."""
+    fields = (
+        "id", "harness", "native_session_id", "child_id", "parent_id", "label",
+        "current_task_generation", "current_execution_generation", "reported_state",
+        "archived", "created_us", "resume_enabled", "resume_inhibited",
+        "process_identity", "version", "task",
+    )
+    return {field: actor[field] for field in fields}
+
+
 def actor_for_context(tx, context: Context) -> dict:
     if context.operator or context.actor_id is None:
         raise CoordinationError("UNBOUND_ACTOR", "Operation requires a native actor")
@@ -479,7 +490,7 @@ def native_context(harness: str | None, environ=None, payload=None, *, store=Non
 def _get(service, context, arguments, tx):
     validate_fields(arguments, set())
     actor = actor_for_context(tx, context)
-    return {"workspace_id": context.workspace_id, "actor": actor, "identity_mode": context.identity_mode,
+    return {"workspace_id": context.workspace_id, "actor": _actor_view(actor), "identity_mode": context.identity_mode,
             "separately_addressable_children": context.identity_mode == "native_child"}
 
 
@@ -525,7 +536,7 @@ def _checkpoint(service, context, arguments, tx):
     tx.connection.execute("UPDATE actors SET reported_state=?,resume_enabled=?,resume_inhibited=CASE WHEN ? THEN 0 ELSE resume_inhibited END,checkpoint_json=?,version=version+1 WHERE id=?",
         (state, int(consent), int(consent), canonical_json({"note": note}), actor["id"]))
     tx.event("identity", "checkpoint", actor["id"], actor["id"], {"state": state})
-    return {"actor": _actor(tx, actor["id"]), "changed": True}
+    return {"actor": _actor_view(_actor(tx, actor["id"])), "changed": True}
 
 
 def _complete(service, context, arguments, tx):
