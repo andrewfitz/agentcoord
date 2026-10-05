@@ -129,11 +129,12 @@ def _covers(groups, desired, harness) -> bool:
     for group in groups:
         if not isinstance(group, dict):
             raise InstallError("Lifecycle groups must be objects")
-        if harness != "cursor" and any(key != "hooks" for key in group):
-            continue
+        unconditional = "matcher" not in group if harness == "cursor" else not any(key != "hooks" for key in group)
         handlers = [group] if harness == "cursor" else group.get("hooks", [])
         if not isinstance(handlers, list):
             raise InstallError("Lifecycle group hooks must be an array")
+        if not unconditional:
+            continue
         for handler in handlers:
             if isinstance(handler, dict) and handler.get("type", "command") == "command" and _tokens(handler.get("command")) == _tokens(desired["command"]):
                 return True

@@ -1,6 +1,6 @@
 id = "agentcoord"
 name = "Agent Coordination"
-version = "0.1.1"
+version = "0.1.2"
 min_herdr_version = "0.9.3"
 description = "Inspect native work, actions and durable coordination history"
 platforms = ["macos", "linux"]

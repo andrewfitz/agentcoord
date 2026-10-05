@@ -307,6 +307,36 @@ def test_restrictive_global_matcher_does_not_remove_broad_project_hook(setup_lay
     assert any(group.get("matcher", "") in {"", "*"} for group in groups)
 
 
+def test_conditional_cursor_handler_does_not_suppress_unconditional_registration(setup_layout):
+    from agentcoord import doctor
+
+    root, home = setup_layout
+    event = next(iter(install.EVENTS["cursor"]))
+    unconditional = install.hook_config("cursor", root)["hooks"][event][0]
+    conditional = {**unconditional, "matcher": "startup"}
+    path = root / HOOK_PATHS["cursor"]
+    write_json(path, {"version": 1, "hooks": {event: [conditional]}})
+    install.init_project(root, apply=True, harnesses=("cursor",), home=home)
+    groups = json.loads(path.read_text())["hooks"][event]
+    assert groups == [conditional, unconditional]
+    assert doctor.harness_configuration(root, "cursor")["lifecycle"]["state"] == "configured"
+    first = snapshot(root), snapshot(home)
+    install.init_project(root, apply=True, harnesses=("cursor",), home=home)
+    assert (snapshot(root), snapshot(home)) == first
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex", "grok"])
+def test_malformed_conditional_group_refuses_before_publication(setup_layout, harness):
+    root, home = setup_layout
+    event = next(iter(install.EVENTS[harness]))
+    path = root / HOOK_PATHS[harness]
+    write_json(path, {"hooks": {event: [{"matcher": "startup", "hooks": {"command": "foreign-hook"}}]}})
+    before = snapshot(root), snapshot(home)
+    with pytest.raises(install.InstallError):
+        install.init_project(root, apply=True, harnesses=(harness,), home=home)
+    assert (snapshot(root), snapshot(home)) == before
+
+
 def test_candidates_contain_skills_without_live_project_configuration(setup_layout, tmp_path):
     root, home = setup_layout
     destination = tmp_path / "review-candidates"
