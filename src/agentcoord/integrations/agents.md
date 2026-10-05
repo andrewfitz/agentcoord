@@ -1,11 +1,10 @@
-Use agentcoord for meaningful scope updates, real dependencies and handoffs.
-At a work boundary, inspect relevant activity and current diffs, then use `sync`
-for pending actions. Read full content by ID before acting. Explicitly consume
-handled messages, resolve decisions and accept reviewed readiness separately.
-Folder scopes describe work; they do not reserve edits. Silence and expired
-presence never authorize overwriting. Keep independent work moving while waiting.
-Native lifecycle hooks observe presence; ordinary commands need no hook or ping.
-Use exact paths or a reviewed patch for shared-checkout commits and preserve peer
-edits and staging. Operator monitor reads never handle another actor's messages.
-Run `agentcoord --help` for the installed commands and `agentcoord doctor --live`
-when configuration or connection needs diagnosis.
+For meaningful shared-checkout work, dependencies, handoffs, commits or
+coordination recovery, read [.agents/skills/agentcoord/SKILL.md](.agents/skills/agentcoord/SKILL.md).
+It routes to command and workflow references; repository instructions and the
+user's authorized scope still govern implementation, checks and commits.
+
+Publish meaningful scope changes and outcomes once. Preserve intentional peer
+edits and staging; folder scopes and historical presence grant no edit authority.
+Handle actions at natural work boundaries. Reads and ordinary commands need no
+declaration, inbox polling, heartbeat or coordination wrapper. Use authenticated
+native identity; never select an actor from a label or inject terminal input.

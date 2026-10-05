@@ -115,3 +115,103 @@ def test_non_text_hook_command_has_explicit_invalid_diagnostic(workspace, comman
     hooks.write_text(json.dumps({"hooks": {"SessionStart": [{"hooks": [{"command": command}]}]}}))
     lifecycle = doctor.harness_configuration(workspace.root, "claude")["lifecycle"]
     assert lifecycle["state"] == "invalid"
+
+
+def test_codex_project_lifecycle_is_configured_without_global_hooks(workspace, tmp_path, monkeypatch):
+    configure(workspace, "codex")
+    home = tmp_path / "separate-native-home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    lifecycle = doctor.harness_configuration(workspace.root, "codex")["lifecycle"]
+    project = workspace.root / ".codex/hooks.json"
+    global_path = home / ".codex/hooks.json"
+    assert lifecycle["state"] == "configured"
+    assert lifecycle["path"] == str(project)
+    assert lifecycle["events"] == sorted(install.EVENTS["codex"])
+    assert lifecycle["sources"] == [
+        {"path": str(project), "state": "configured", "events": sorted(install.EVENTS["codex"])},
+        {"path": str(global_path), "state": "missing", "events": []},
+    ]
+
+
+def test_codex_lifecycle_merges_project_and_global_event_coverage(workspace, tmp_path, monkeypatch):
+    configure(workspace, "codex")
+    home = tmp_path / "separate-native-home"
+    hooks = home / ".codex/hooks.json"
+    hooks.parent.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    generated = install.hook_config("codex", workspace.root)["hooks"]
+    events = list(generated)
+    project_events, global_events = events[:2], events[2:]
+    (workspace.root / ".codex/hooks.json").write_text(json.dumps({"hooks": {event: generated[event] for event in project_events}}))
+    hooks.write_text(json.dumps({"hooks": {event: generated[event] for event in global_events}}))
+    lifecycle = doctor.harness_configuration(workspace.root, "codex")["lifecycle"]
+    assert lifecycle["state"] == "configured"
+    assert lifecycle["events"] == sorted(events)
+    assert [source["state"] for source in lifecycle["sources"]] == ["partial", "partial"]
+    assert lifecycle["sources"][0]["events"] == sorted(project_events)
+    assert lifecycle["sources"][1]["events"] == sorted(global_events)
+
+
+@pytest.mark.parametrize("invalid_layer", ["project", "global"])
+@pytest.mark.parametrize("invalid_content", ['{"hooks":{},"hooks":{}}', '{"hooks":{},"custom":NaN}'])
+def test_invalid_codex_layer_prevents_clean_combined_lifecycle(workspace, tmp_path, monkeypatch, invalid_layer, invalid_content):
+    configure(workspace, "codex")
+    home = tmp_path / "separate-native-home"
+    global_path = home / ".codex/hooks.json"
+    global_path.parent.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    global_path.write_text(json.dumps(install.hook_config("codex", workspace.root)))
+    invalid = global_path if invalid_layer == "global" else workspace.root / ".codex/hooks.json"
+    invalid.write_text(invalid_content)
+    lifecycle = doctor.harness_configuration(workspace.root, "codex")["lifecycle"]
+    assert lifecycle["state"] == "invalid"
+    assert next(source for source in lifecycle["sources"] if source["path"] == str(invalid))["state"] == "invalid"
+
+
+def test_restrictive_codex_matcher_is_not_unconditional_coverage(workspace, tmp_path, monkeypatch):
+    configure(workspace, "codex")
+    home = tmp_path / "separate-native-home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    hooks = install.hook_config("codex", workspace.root)
+    hooks["hooks"]["SessionStart"][0]["matcher"] = "startup"
+    (workspace.root / ".codex/hooks.json").write_text(json.dumps(hooks))
+    lifecycle = doctor.harness_configuration(workspace.root, "codex")["lifecycle"]
+    assert lifecycle["state"] == "partial"
+    assert "SessionStart" not in lifecycle["events"]
+
+
+def test_malformed_conditional_group_is_invalid_not_missing_coverage(workspace):
+    configure(workspace, "codex")
+    path = workspace.root / ".codex/hooks.json"
+    hooks = install.hook_config("codex", workspace.root)
+    hooks["hooks"]["SessionStart"].append({"matcher": "startup", "hooks": {"command": "foreign-hook"}})
+    path.write_text(json.dumps(hooks))
+    lifecycle = doctor.harness_configuration(workspace.root, "codex")["lifecycle"]
+    assert lifecycle["state"] == "invalid"
+
+
+def test_malformed_codex_layer_is_reported_even_when_all_mcp_servers_registered(workspace, tmp_path, monkeypatch):
+    for harness in install.HARNESSES:
+        configure(workspace, harness)
+    home = tmp_path / "separate-native-home"
+    path = home / ".codex/hooks.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"hooks":[]}')
+    monkeypatch.setattr(Path, "home", lambda: home)
+    report = doctor.inspect(workspace)
+    assert all(item["configured"] for item in report["configuration"])
+    assert report["status"] == "needs_verification"
+    assert any(issue["code"] == "LIFECYCLE_CONFIGURATION_INVALID" and issue["harness"] == "codex" for issue in report["issues"])
+    assert report["observed"]["state"] == "not_checked"
+
+
+@pytest.mark.parametrize("version", [True, "1", 2])
+def test_unsupported_cursor_hook_schema_is_invalid_even_with_complete_events(workspace, version):
+    configure(workspace, "cursor")
+    path = workspace.root / ".cursor/hooks.json"
+    value = json.loads(path.read_text())
+    value["version"] = version
+    path.write_text(json.dumps(value))
+    assert doctor.harness_configuration(workspace.root, "cursor")["lifecycle"]["state"] == "invalid"

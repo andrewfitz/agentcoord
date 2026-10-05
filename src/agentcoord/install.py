@@ -66,7 +66,8 @@ def _publish(path: Path, content: bytes, original: bytes | None, mode: int = 0o6
 
 
 def integration_text(name: str) -> str:
-    if name not in {"agents.md", "claude.md", "project.toml", "herdr-plugin.toml", "herdr.sh"}:
+    if name not in {"agents.md", "claude.md", "project.toml", "herdr-plugin.toml", "herdr.sh",
+                    "skill/SKILL.md", "skill/references/commands.md", "skill/references/workflows.md"}:
         raise InstallError(f"Unknown integration resource: {name}")
     return resources.files("agentcoord").joinpath("integrations", name).read_text(encoding="utf-8")
 
@@ -74,6 +75,12 @@ def integration_text(name: str) -> str:
 def instruction_content(original: str, kind: str = "agents") -> str:
     """Replace one generated block while retaining every other byte of prose."""
     body = integration_text(f"{kind}.md").rstrip("\n")
+    if kind == "claude":
+        outside = original
+        if BEGIN_MARKER in original and END_MARKER in original:
+            outside = original[:original.index(BEGIN_MARKER)] + original[original.index(END_MARKER) + len(END_MARKER):]
+        if re.search(r"(?m)^@AGENTS\.md\s*$", outside):
+            body = re.sub(r"(?m)^@AGENTS\.md\n?", "", body).lstrip("\n")
     block = f"{BEGIN_MARKER}\n{body}\n{END_MARKER}"
     starts, ends = original.count(BEGIN_MARKER), original.count(END_MARKER)
     if starts != ends or starts > 1:
@@ -87,8 +94,9 @@ def instruction_content(original: str, kind: str = "agents") -> str:
     return original + separator + block + "\n"
 
 
-def init_project(root: Path, *, apply: bool = False, instructions: bool = True) -> dict:
-    """Initialize only requested project files; service and harness activation are separate."""
+def init_project(root: Path, *, apply: bool = False, instructions: bool = True,
+                 harnesses=HARNESSES, executable: str = "agentcoord", home: Path | None = None) -> dict:
+    """Initialize guidance and native configs; trust and service startup stay explicit."""
     root = Path(root).resolve(strict=True)
     targets = [(root / ".agentcoord.toml", integration_text("project.toml"))]
     if instructions:
@@ -104,6 +112,8 @@ def init_project(root: Path, *, apply: bool = False, instructions: bool = True) 
         # Existing project configuration is the user's authority, not a template to replace.
         updated = original if path.name == ".agentcoord.toml" and original is not None else text.encode("utf-8")
         planned.append((path, original, updated))
+    from .setup import plan_setup
+    planned.extend(plan_setup(root, executable=executable, harnesses=harnesses, home=home, instructions=instructions))
     result = {"root": str(root), "applied": apply, "files": [{"path": str(p), "changed": old != new} for p, old, new in planned]}
     if apply:
         # Validate all targets before publishing any file.
@@ -111,17 +121,35 @@ def init_project(root: Path, *, apply: bool = False, instructions: bool = True) 
             if (path.read_bytes() if path.exists() else None) != old:
                 raise InstallError(f"File changed during initialization: {path}")
         for path, old, new in planned:
-            _publish(path, new, old)
+            mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
+            _publish(path, new, old, mode)
+    result["harnesses"] = list(harnesses)
+    result["next_actions"] = ["Review and trust changed native hooks through each harness, then naturally reload existing sessions and MCP catalogs.",
+                              "Start the foreground service, or explicitly install the managed macOS service; verify with doctor --live."]
     return result
+
+
+def _setup_environment(root: Path) -> dict[str, str]:
+    """Plan discovery routing without registering a workspace during preview."""
+    from .config import daemon_environment, discover_workspace, state_home
+    from .core import CoordinationError
+    root = Path(root).resolve(strict=True)
+    try:
+        return daemon_environment(discover_workspace(explicit_root=root))
+    except CoordinationError as error:
+        if error.code != "NOT_FOUND":
+            raise
+    socket_home = os.environ.get("AGENTCOORD_SOCKET_HOME", "").strip()
+    sockets = Path(socket_home).expanduser().absolute() if socket_home else Path("/private/tmp" if sys.platform == "darwin" else "/tmp") / f"agentcoord-{os.getuid()}"
+    return {"AGENTCOORD_STATE_HOME": str(state_home()), "AGENTCOORD_SOCKET_HOME": str(sockets), "AGENTCOORD_WORKSPACE": str(root)}
 
 
 def mcp_config(harness: str, root: Path, executable: str = "agentcoord") -> dict:
     if harness not in HARNESSES:
         raise InstallError(f"Unsupported harness: {harness}")
-    from .config import daemon_environment, discover_workspace
-    workspace = discover_workspace(explicit_root=root)
-    entry = {"command": executable, "args": ["--project", str(workspace.root), "mcp", "--harness", harness],
-             "env": daemon_environment(workspace)}
+    root = Path(root).resolve(strict=True)
+    entry = {"command": executable, "args": ["--project", str(root), "mcp", "--harness", harness],
+             "env": _setup_environment(root)}
     if harness == "codex":
         entry["env_vars"] = ["CODEX_THREAD_ID", "AGENTCOORD_CHILD_ID", "AGENTCOORD_NATIVE_RUN_ID"]
     return {"mcp_servers" if harness in {"codex", "grok"} else "mcpServers": {"agentcoord": entry}}
@@ -130,12 +158,11 @@ def mcp_config(harness: str, root: Path, executable: str = "agentcoord") -> dict
 def hook_config(harness: str, root: Path, executable: str = "agentcoord") -> dict:
     if harness not in HARNESSES:
         raise InstallError(f"Unsupported harness: {harness}")
-    from .config import daemon_environment, discover_workspace
-    workspace = discover_workspace(explicit_root=root)
-    environment = [f"{key}={value}" for key, value in daemon_environment(workspace).items()]
+    root = Path(root).resolve(strict=True)
+    environment = [f"{key}={value}" for key, value in _setup_environment(root).items()]
     hooks = {}
     for native_event, event in EVENTS[harness].items():
-        command = shlex.join(["env", *environment, executable, "--project", str(workspace.root), "hook", harness, event])
+        command = shlex.join(["env", *environment, executable, "--project", str(root), "hook", harness, event])
         handler = {"type": "command", "command": command, "timeout": 15}
         hooks[native_event] = [handler] if harness == "cursor" else [{"hooks": [handler]}]
     return {"version": 1, "hooks": hooks} if harness == "cursor" else {"hooks": hooks}
@@ -179,11 +206,12 @@ def _herdr_python(executable: str) -> str:
     raise InstallError("Herdr requires a validated Python 3.11+ executable on PATH or beside agentcoord")
 
 
-def generate_candidates(root: Path, destination: Path, *, executable: str = "agentcoord") -> dict:
+def generate_candidates(root: Path, destination: Path, *, executable: str = "agentcoord", harnesses=HARNESSES) -> dict:
     """Write inert fragments into an explicit separate directory, never live configuration."""
-    from .config import daemon_environment, discover_workspace
     root = root.resolve(strict=True)
-    workspace = discover_workspace(explicit_root=root)
+    harnesses = tuple(harnesses)
+    if len(set(harnesses)) != len(harnesses) or any(h not in HARNESSES for h in harnesses):
+        raise InstallError("Select each supported harness at most once")
     destination = destination.absolute()
     no_links(destination)
     destination = destination.resolve()
@@ -191,7 +219,7 @@ def generate_candidates(root: Path, destination: Path, *, executable: str = "age
     if destination == root or any(destination == path or path in destination.parents for path in live_dirs):
         raise InstallError("Candidate directory must be separate from active harness configuration")
     candidates: dict[str, bytes] = {}
-    for harness in HARNESSES:
+    for harness in harnesses:
         config = mcp_config(harness, root, executable)
         suffix = "toml" if harness in {"codex", "grok"} else "json"
         content = _toml_mcp(config) if suffix == "toml" else json.dumps(config, ensure_ascii=False, indent=2) + "\n"
@@ -200,12 +228,14 @@ def generate_candidates(root: Path, destination: Path, *, executable: str = "age
     for name in ("agents.md", "claude.md", "project.toml", "herdr-plugin.toml", "herdr.sh"):
         content = integration_text(name)
         if name == "herdr.sh":
-            routing = daemon_environment(workspace)
+            routing = _setup_environment(root)
             routing.pop("AGENTCOORD_WORKSPACE")
             environment = shlex.join(["env", *[f"{key}={value}" for key, value in routing.items()]])
             python = _herdr_python(executable)
             content = content.replace("@ENVIRONMENT@", environment).replace("@PYTHON@", shlex.quote(python)).replace("@EXECUTABLE@", shlex.quote(executable))
         candidates[name] = content.encode()
+    from .setup import skill_resources
+    candidates.update(skill_resources(harnesses))
     # Exclusive publication prevents reruns silently overwriting review candidates.
     for name in candidates:
         path = destination / name

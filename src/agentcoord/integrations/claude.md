@@ -1,4 +1,7 @@
-Follow the shared coordination guidance in AGENTS.md. The agentcoord MCP adapter
-binds this native session once; reconnect after adapter upgrades to refresh its
-tool catalog. A shared parent connection represents that parent; independently
-attributed children require their own native binding.
+@AGENTS.md
+
+Agentcoord's shared skill is `.agents/skills/agentcoord/SKILL.md`; read it when
+coordination applies. After an adapter upgrade, use the installed CLI until a
+natural reconnect refreshes this session's MCP catalog. A shared parent
+connection represents that parent; independently attributed children require
+their own native binding.

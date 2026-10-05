@@ -1098,8 +1098,11 @@ def parser():
         command = groups[()].add_parser(name)
         command.set_defaults(maintenance=name)
         if name == "init":
-            command.add_argument("--candidate-dir", type=Path)
-            command.add_argument("--apply", action="store_true")
+            mode = command.add_mutually_exclusive_group()
+            mode.add_argument("--candidate-dir", type=Path)
+            mode.add_argument("--apply", action="store_true")
+            command.add_argument("--harnesses", nargs="+", choices=("claude", "codex", "cursor", "grok"),
+                                 default=("claude", "codex", "cursor", "grok"), help="Native project integrations to install (default: all four)")
         elif name == "doctor":
             command.add_argument("--live", action="store_true")
         elif name in {"backup", "restore"}:
@@ -1265,9 +1268,11 @@ def _maintenance(args, workspace):
         from .install import generate_candidates, init_project
 
         root = args.root or Path.cwd()
+        import shutil
+        executable = shutil.which("agentcoord") or "agentcoord"
         if args.candidate_dir:
-            return generate_candidates(root, args.candidate_dir)
-        result = init_project(root, apply=args.apply)
+            return generate_candidates(root, args.candidate_dir, harnesses=args.harnesses, executable=executable)
+        result = init_project(root, apply=args.apply, harnesses=args.harnesses, executable=executable)
         if args.apply:
             from .config import register_workspace
 

@@ -1,7 +1,8 @@
 {
   "schema_version": 1,
   "requirements": [
-    "mcp==2.2.0"
+    "mcp==2.2.0",
+    "tomlkit==0.15.1"
   ],
   "dependencies": [
     {
@@ -171,6 +172,12 @@
       "version": "3.0",
       "url": "https://files.pythonhosted.org/packages/1b/7d/92392ff7815c21062bea51aa7b87d45576f649f16458d78b7cf94b9ab2e6/pycparser-3.0.tar.gz",
       "sha256": "600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29"
+    },
+    {
+      "name": "tomlkit",
+      "version": "0.15.1",
+      "url": "https://files.pythonhosted.org/packages/94/96/e07752635b98536177fa1f37671c8f3cdde2e724c6bcf6034b2cfb571565/tomlkit-0.15.1.tar.gz",
+      "sha256": "e25bbf38843005246210a12982776f27f99cb9be67160e14434d0c0d21ee1e97"
     }
   ],
   "targets": {
@@ -372,6 +379,13 @@
           "filename": "uvicorn-0.54.0-py3-none-any.whl",
           "url": "https://files.pythonhosted.org/packages/38/0c/b54a4fdd7f90a3af8b02ebc9ce6712c2c208b7926a2f7bad95c33ebbe943/uvicorn-0.54.0-py3-none-any.whl",
           "sha256": "505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf"
+        },
+        {
+          "name": "tomlkit",
+          "version": "0.15.1",
+          "filename": "tomlkit-0.15.1-py3-none-any.whl",
+          "url": "https://files.pythonhosted.org/packages/13/bc/8c13eb66537dce1d2bd3a57132902f38d0e7f5bb46fa9f4daed9fe9d76ee/tomlkit-0.15.1-py3-none-any.whl",
+          "sha256": "177a05aece5a8ca5266fd3c448abb47b8d352f09d477d3ca8332db4d89b24304"
         }
       ],
       "abi": "cpython-314-darwin"

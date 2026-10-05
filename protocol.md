@@ -91,15 +91,31 @@ sessions are never terminated by service installation or upgrade.
 
 ## Installation and operator inspection
 
-`init` writes optional project configuration and narrowly marked instruction
-snippets, preserving existing user content. `init --candidate-dir PATH` produces
-inert MCP/lifecycle/Herdr fragments for review. Review full lifecycle hook
-definitions, approve changed definitions through the harness's native hook-trust
-mechanism, and confirm the actual client loaded and ran them; parsed configuration
-alone is not proof. After the authority switch, existing
-MCP sessions use the installed `agentcoord` CLI with `--project /absolute/repository`
-until a natural reconnect refreshes their catalog; never invoke cached retired
-tools. Do not inject terminal input or force-restart agent sessions.
+`init` previews setup; `init --apply` registers the workspace, writes optional
+project configuration and marked instruction snippets, installs the shared
+`.agents/skills/agentcoord/SKILL.md` and safely merges selected harness project
+MCP/lifecycle configuration. `--harnesses` selects Claude, Codex, Cursor and Grok,
+with all selected by default. Existing user content and unrelated tools/hooks
+are preserved; installer-owned resources changed by the user are refused rather
+than overwritten. Equivalent already configured native lifecycle handlers may
+be reused to avoid duplicate observations. Installation does not start a service
+or authorize native resume scheduling.
+
+AGENTS.md routes coordination to the shared skill and CLAUDE.md imports AGENTS.md.
+Claude/Cursor native skill pointers refer to that one authority; Codex/Grok
+discover it directly. The skill's progressively loaded command/workflow
+references cover coordination only; repository and user rules still own scope,
+implementation, checks and commits. `init --candidate-dir PATH` produces inert
+configuration, skill and instruction candidates for review.
+
+Review full lifecycle hook definitions, approve changed definitions through the
+harness's native hook-trust mechanism, and confirm the actual client loaded and
+ran them; parsed configuration alone is not proof. An unsupported approval
+mechanism remains an explicit operator-review step. Hooks and MCP catalogs may
+be cached until a natural session reload/reconnect. Refresh clients before
+retiring old commands. Existing MCP sessions use the installed `agentcoord` CLI
+with `--project /absolute/repository` until their catalog refreshes; never invoke
+cached retired tools. Do not inject terminal input or force-restart agent sessions.
 
 macOS supports per-workspace launchd units. Linux supports an independently usable
 foreground service with `agentcoord serve`. Managed restart/removal requires the

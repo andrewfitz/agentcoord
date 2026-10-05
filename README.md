@@ -28,11 +28,32 @@ agentcoord init --apply
 agentcoord init --candidate-dir /absolute/path/to/reviewed-configs
 ```
 
-The first command registers the workspace and installs the optional configuration
-and instruction block. The second generates inert MCP and lifecycle candidates.
-Merge the applicable candidates into the harness configuration, preserving
-unrelated tools and hooks. Start the foreground service with `agentcoord serve`
-on macOS or Linux. On macOS, `agentcoord service install --apply` installs and
+The first command registers the workspace, installs optional project configuration
+and marked instructions, and safely merges the selected harnesses' project MCP
+and lifecycle configuration. Existing unrelated tools, hooks and user instructions
+are preserved. The default selection is Claude, Codex, Cursor and Grok; use
+`init --help` for `--harnesses` selection. The second command generates inert
+configuration and guidance candidates for review instead of activating them.
+The installer checks ownership before writing and refuses changed resources it
+cannot safely replace; it does not bypass native hook approval.
+
+The repository-neutral coordination skill lives at
+`.agents/skills/agentcoord/SKILL.md`. AGENTS.md routes relevant work there;
+CLAUDE.md imports AGENTS.md. Claude and Cursor receive native skill pointers to
+the shared authority, while Codex and Grok discover the shared skill directly.
+The skill keeps routine coordination concise and progressively loads command
+selection and workflow references, covering every CLI family and when to use it.
+It does not impose repository-specific checks, versioning or commit policy.
+
+Configuration writes do not prove that open clients loaded or trusted hooks.
+Review and approve changed definitions through each harness's native trust
+mechanism; reload at a natural session boundary and confirm actual execution.
+Cached MCP sessions use the installed CLI until a natural reconnect refreshes
+their catalog. Refresh clients before retiring old commands. Unsupported native
+approval mechanisms require operator review, not invented trust or a claimed
+successful activation. Setup does not start a service. Start the foreground
+service with `agentcoord serve` on macOS or Linux. On macOS,
+`agentcoord service install --apply` installs and
 starts the workspace's launchd service as an alternative to foreground operation.
 Without `--apply`, `agentcoord service install` only previews the installation.
 `agentcoord doctor --live` distinguishes configuration from observed connectivity.
@@ -76,7 +97,9 @@ effect. Slow commands normally wait for a terminal receipt in the adapter;
 `--no-wait` returns the durable operation ID. A queued receipt is not completion.
 
 See [protocol.md](protocol.md) for message content, lifecycle, handoff and recovery
-rules. Each command exposes its actual fields through `--help`.
+rules. Installed agents use the shared skill's `references/commands.md` to choose
+commands and `references/workflows.md` for the relevant procedure. Each command
+exposes its actual fields through `--help`; the skill never replaces that schema.
 
 ## Identity and delivery
 

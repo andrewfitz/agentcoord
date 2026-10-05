@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from agentcoord import install
+from agentcoord import __version__, install
 
 
 @pytest.fixture
@@ -58,7 +58,7 @@ class Maintenance:
         self.activated = False
 
     def health(self):
-        return {"ok": True, "data": {"workspace_id": self.workspace_id, "protocol": 1, "release": "0.1.0", "database_state": "ready", "maintenance_error": None, "service_state": "quiescent" if self.drained else "active", "running_effects": self.running, "uncertain_effects": self.uncertain}}
+        return {"ok": True, "data": {"workspace_id": self.workspace_id, "protocol": 1, "release": __version__, "database_state": "ready", "maintenance_error": None, "service_state": "quiescent" if self.drained else "active", "running_effects": self.running, "uncertain_effects": self.uncertain}}
 
     def drain(self, *, key):
         self.drained = True
