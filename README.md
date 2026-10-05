@@ -140,6 +140,11 @@ status/acknowledgment conversations. `message-batch --ids ...` reads selected
 messages in one bounded call with explicit continuations and no handling effects.
 Previews identify senders and incomplete text; send receipts do not echo bodies.
 Compact JSON saves formatting bytes without a code dictionary or lost context.
+Message batches fetch each candidate once and account for serialized bytes
+incrementally. Pending counts avoid body previews, and routing reads only actor
+authority fields rather than large retained import payloads.
+Activity discovery defaults to current reported scopes, querying the current
+set directly; use `activities --no-current` when historical intent is needed.
 
 A normal service restart preserves work. Explicit maintenance drain stops new
 mutations and external starts, permits outcome inspection and waits for owned

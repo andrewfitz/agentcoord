@@ -113,13 +113,17 @@ def activity(service, context, args, tx):
     return {"recorded": True, "activity": _record(tx, row), "identity_mode": "shared_group" if shared else "native_actor"}
 
 
-def activity_select(tx, context, *, paths=(), after=0, limit=20, current=False):
+def activity_select(tx, context, *, paths=(), after=0, limit=20, current=True):
     scoped = normalize_paths(paths, allow_root=True)
     after, limit = integer(after, "after", 0, 2**63-1), integer(limit, "limit", 1, 100)
-    sql = "SELECT a.* FROM activities a WHERE a.sequence>?"
+    sql = "SELECT a.* FROM activities a"
     params = [after]
     if current:
-        sql += " AND (EXISTS (SELECT 1 FROM current_activity c WHERE c.activity_id=a.id) OR EXISTS (SELECT 1 FROM shared_activity_current c WHERE c.activity_id=a.id))"
+        # Drive discovery from the small current set. Correlated EXISTS checks
+        # otherwise scan that set for each historical activity before LIMIT.
+        sql += """ JOIN (SELECT activity_id FROM current_activity UNION
+            SELECT activity_id FROM shared_activity_current) c ON c.activity_id=a.id"""
+    sql += " WHERE a.sequence>?"
     if scoped:
         sql += """ AND EXISTS (SELECT 1 FROM activity_paths p JOIN json_each(?) q
             ON p.path=q.value OR p.path='.' OR q.value='.' OR instr(p.path,q.value||'/')=1
@@ -133,9 +137,9 @@ def activity_select(tx, context, *, paths=(), after=0, limit=20, current=False):
 
 def activities(service, context, args, tx):
     validate_fields(args, {"paths", "after", "limit", "current"})
-    if type(args.get("current", False)) is not bool:
+    if type(args.get("current", True)) is not bool:
         _fail("current must be a boolean")
-    return activity_select(tx, context, paths=args.get("paths", ()), after=args.get("after", 0), limit=args.get("limit", 20), current=args.get("current", False))
+    return activity_select(tx, context, paths=args.get("paths", ()), after=args.get("after", 0), limit=args.get("limit", 20), current=args.get("current", True))
 
 
 def intent(service, context, args, tx):

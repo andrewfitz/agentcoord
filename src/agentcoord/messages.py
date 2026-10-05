@@ -74,7 +74,9 @@ def paths(values, *, root=False):
 
 def actor(tx, actor_id, *, active=False):
     identifier(actor_id, "actor")
-    row = tx.connection.execute("SELECT * FROM actors WHERE id=?", (actor_id,)).fetchone()
+    # Routing needs authority fields, never retained import/checkpoint payloads.
+    row = tx.connection.execute("""SELECT id,child_id,current_task_generation,
+        archived,reported_state FROM actors WHERE id=?""", (actor_id,)).fetchone()
     if row is None:
         _error("Actor does not exist", "NOT_FOUND")
     if active and (row["archived"] or row["reported_state"] in {"paused", "completed"}):
@@ -147,6 +149,11 @@ def _decode_chunk(raw, offset, limit, total_bytes):
 
 def attachment_index(tx, context, message_id, *, after=None, limit=20):
     _visible(tx, context, message_id)
+    return _attachment_page(tx, message_id, after=after, limit=limit)
+
+
+def _attachment_page(tx, message_id, *, after=None, limit=20):
+    """Metadata only, after the caller has established message visibility."""
     limit = integer(limit, "limit", 1, 100)
     if after is not None:
         identifier(after, "attachment continuation")
@@ -183,7 +190,7 @@ def read_message(tx, context, message_id, *, offset=0, limit=32768):
     raw = bytes(tx.connection.execute("SELECT substr(body_utf8,?,?) FROM messages WHERE id=?",
         (offset+1, limit+4, message_id)).fetchone()[0])
     body, next_offset = _decode_chunk(raw, offset, limit, row["body_bytes"])
-    attachments = attachment_index(tx, context, message_id)
+    attachments = _attachment_page(tx, message_id)
     return {"id": row["id"], "sender_id": row["sender_id"], "subject": row["subject"],
             "kind": row["kind"], "thread": row["thread"], "sequence": row["sequence"],
             "body": body, "body_bytes": row["body_bytes"], "offset": offset,
@@ -217,23 +224,34 @@ def read_batch(tx, context, ids, *, index=0, body_limit=8192, byte_budget=32768)
     body_limit = integer(body_limit, "body_limit", 4, 32768)
     byte_budget = integer(byte_budget, "byte_budget", 16384, 65536)
     result = {"items": [], "next_index": None}
+    item_bytes = 0
     for position in range(index, len(ids)):
         limit = body_limit
+        try:
+            item = {"ok": True, **read_message(tx, context, ids[position], limit=limit)}
+        except CoordinationError as error:
+            item = {"ok": False, "id": ids[position], "error": {"code": error.code, "message": error.message}}
+        next_index = position + 1 if position + 1 < len(ids) else None
+        # Serialize each item, not every earlier body on every candidate.
+        overhead = len(canonical({"items": [], "next_index": next_index}).encode())
         while True:
-            try:
-                item = {"ok": True, **read_message(tx, context, ids[position], limit=limit)}
-            except CoordinationError as error:
-                item = {"ok": False, "id": ids[position], "error": {"code": error.code, "message": error.message}}
-            candidate = {"items": [*result["items"], item], "next_index": position + 1 if position + 1 < len(ids) else None}
-            if len(canonical(candidate).encode()) <= byte_budget:
-                result = candidate
+            encoded_bytes = len(canonical(item).encode())
+            # Each existing item needs one comma before this one.
+            if overhead + item_bytes + encoded_bytes + len(result["items"]) <= byte_budget:
+                result["items"].append(item)
+                result["next_index"] = next_index
+                item_bytes += encoded_bytes
                 break
             if result["items"]:
                 result["next_index"] = position
                 return result
-            if limit == 4:
+            if limit == 4 or not item["ok"]:
                 _error("Message metadata exceeds batch budget; use message or a larger byte_budget")
             limit = max(4, limit // 2)
+            # Immutable content was fetched once. Shorten only the returned
+            # prefix, retaining an exact UTF-8 continuation for the remainder.
+            body, offset = _decode_chunk(item["body"].encode("utf-8"), 0, limit, item["body_bytes"])
+            item = {**item, "body": body, "next_offset": offset}
     return result
 
 
@@ -264,13 +282,14 @@ def notice_ids(tx, context, table, column, record_id):
             "message_ids_more": count > len(rows)}
 
 
-def _pending_query(tx, context, *, new_only=False, filters=None, exclude_domain_notifications=False):
+def _pending_query(tx, context, *, new_only=False, filters=None, exclude_domain_notifications=False,
+                   count=False):
     filters = pending_filters(filters)
-    sql = """SELECT m.id,m.kind,m.subject,m.sender_id,m.thread,m.body_bytes,m.sequence,m.created_us,
+    columns = "COUNT(DISTINCT m.id)" if count else """m.id,m.kind,m.subject,m.sender_id,m.thread,m.body_bytes,m.sequence,m.created_us,
         MIN(r.actor_id) AS actor_id,COUNT(*) AS recipient_count,
         CASE WHEN SUM(r.presented_us IS NULL)>0 THEN NULL ELSE MIN(r.presented_us) END AS presented_us,
-        substr(CAST(m.body_utf8 AS TEXT),1,360) AS summary
-        FROM recipients r JOIN messages m ON m.id=r.message_id WHERE r.handled_us IS NULL"""
+        substr(CAST(m.body_utf8 AS TEXT),1,360) AS summary"""
+    sql = f"SELECT {columns} FROM recipients r JOIN messages m ON m.id=r.message_id WHERE r.handled_us IS NULL"
     args = []
     if not context.operator:
         sql += " AND r.actor_id=?"
@@ -317,8 +336,8 @@ def select_unhandled(tx, context, *, after=None, limit=20, exclude_ids=(), new_o
 
 def count_pending(tx, context, *, exclude_domain_notifications=False, new_only=False, filters=None):
     sql, args = _pending_query(tx, context, new_only=new_only, filters=filters,
-                              exclude_domain_notifications=exclude_domain_notifications)
-    count = tx.connection.execute("SELECT COUNT(*) FROM (" + sql + " GROUP BY m.id)", args).fetchone()[0]
+                              exclude_domain_notifications=exclude_domain_notifications, count=True)
+    count = tx.connection.execute(sql, args).fetchone()[0]
     return {"messages": count}
 
 

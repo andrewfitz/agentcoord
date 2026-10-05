@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from agentcoord import cli, identity, pending
+from agentcoord import cli, identity, messages, pending
 from agentcoord.application import build_service
-from agentcoord.core import Call, canonical_json
+from agentcoord.core import Call, Context, canonical_json
 from agentcoord.mcp import tool_result
 
 
@@ -123,3 +123,82 @@ def test_cli_batch_schema_and_compact_mcp_preserve_exact_content():
     encoded = tool_result(envelope).content[0].text
     assert json.loads(encoded) == envelope
     assert len(encoded.encode()) < len(json.dumps(envelope, ensure_ascii=False).encode())
+
+
+def test_tight_batch_budget_does_not_refetch_bodies_when_shortening(runtime):
+    service, actors = runtime
+    ids = [send(runtime, '"\\\n🧩' * 4000, declared_context={"why": "x" * 8000}) for _ in range(2)]
+    with service.store.read() as tx:
+        queries = []
+        tx.connection.set_trace_callback(queries.append)
+        result = messages.read_batch(tx, actors[1], ids, body_limit=32768, byte_budget=16384)
+        tx.connection.set_trace_callback(None)
+    assert result["items"][0]["next_offset"] is not None
+    assert len(canonical_json(result).encode()) <= 16384
+    body_reads = [q for q in queries if "SELECT substr(body_utf8" in q]
+    assert len(body_reads) <= len(ids)
+    # Body, visibility and metadata are fetched at most once per candidate.
+    assert len(queries) <= 3 * len(ids)
+
+
+def test_batch_budget_accounts_for_escaping_and_two_digit_continuations(runtime):
+    service, actors = runtime
+    body = '"\\\n' * 600 + '🧩' * 100
+    ids = [send(runtime, body, declared_context={"why": "x" * 6800}) for _ in range(16)]
+    index, seen = 0, []
+    with service.store.read() as tx:
+        while index is not None:
+            result = messages.read_batch(tx, actors[1], ids, index=index, body_limit=32768, byte_budget=16384)
+            assert len(canonical_json(result).encode()) <= 16384
+            assert result["items"]
+            for item in result["items"]:
+                assert item["ok"]
+                seen.append(item["id"])
+                prefix = body.encode()[:item["next_offset"]] if item["next_offset"] else body.encode()
+                assert item["body"].encode() == prefix
+            assert result["next_index"] is None or result["next_index"] > index
+            index = result["next_index"]
+    assert seen == ids
+
+
+def test_counts_deduplicate_recipients_and_keep_filters_without_body_projection(runtime):
+    service, actors = runtime
+    result = service.execute(actors[0], Call("message.send", {
+        "recipients": [a.actor_id for a in actors[1:]], "kind": "handoff",
+        "subject": "Shared parser result", "body": "🧩" * 4000,
+        "paths": ["src/parser.py"], "thread": "parser-task",
+    }, str(uuid.uuid4())))
+    assert result["ok"], result
+    operator = Context(actors[0].workspace_id, None, operator=True)
+    with service.store.read() as tx:
+        queries = []
+        tx.connection.set_trace_callback(queries.append)
+        assert messages.count_pending(tx, operator) == {"messages": 1}
+        assert messages.count_pending(tx, operator, filters={"path": "src"}) == {"messages": 1}
+        assert messages.count_pending(tx, actors[1], filters={"task": "parser-task"}) == {"messages": 1}
+        assert messages.count_pending(tx, operator, filters={"path": "unrelated"}) == {"messages": 0}
+    assert all("body_utf8" not in query for query in queries)
+    handled = service.execute(actors[1], Call("message.consume", {"id": result["data"]["id"]}, str(uuid.uuid4())))
+    assert handled["ok"], handled
+    with service.store.read() as tx:
+        assert messages.count_pending(tx, actors[1]) == {"messages": 0}
+        assert messages.count_pending(tx, operator) == {"messages": 1}
+
+
+def test_routing_checks_do_not_allocate_large_retained_actor_payload(runtime):
+    import tracemalloc
+
+    service, actors = runtime
+    with service.store.write() as tx:
+        tx.connection.execute("UPDATE actors SET metadata_json=? WHERE id=?",
+            (canonical_json({"retained": "x" * 512000}), actors[1].actor_id))
+    with service.store.read() as tx:
+        tracemalloc.start()
+        try:
+            actor = messages.actor(tx, actors[1].actor_id, active=True)
+            _, peak = tracemalloc.get_traced_memory()
+        finally:
+            tracemalloc.stop()
+    assert actor["id"] == actors[1].actor_id
+    assert actor["current_task_generation"] == actors[1].task_generation
+    assert peak < 64000

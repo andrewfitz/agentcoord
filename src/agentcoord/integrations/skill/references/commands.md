@@ -17,7 +17,7 @@ invented identities. These are routing notes, not a duplicate argument schema.
 | `complete` | Explicitly finish the bound actor's work. |
 | `status` | Inspect observed presence separately from reported task state; use pagination for broader inspection. |
 | `activity` | Report a meaningful scope, blocker, handoff or outcome once. |
-| `activities` | Find relevant reported work by paths before overlapping changes; history is not presence or ownership. |
+| `activities` | Find current reported scopes by paths before overlapping changes; use `--no-current` for history. Neither view proves presence or ownership. |
 | `intent` | Record a change's purpose and invariants when that context helps peers, without reserving edits. |
 | `evidence` | Find existing intent, outcomes and evidence for affected paths before asking another owner. |
 | `evidence-detail` | Retrieve a complete selected evidence record using its returned kind/ID and continuation. |

@@ -9,8 +9,9 @@ still owns placement, testing, commit expectations and versioning.
 
 Publish one `activity` for meaningful starting scope and update it only when the
 scope or outcome materially changes. Before editing overlapping work, read the
-current Git diff and relevant `activities --current --paths ...`/`evidence`. Use
-historical activity only when an earlier intentional change needs explanation.
+current Git diff and relevant `activities --paths ...`/`evidence` (current scopes
+are the default). Use `activities --no-current` only when an earlier intentional
+change needs explanation.
 Scope history is a discovery
 lead, not a lock or proof of live ownership. Preserve intentional repairs,
 including changes not related to your task.
@@ -60,6 +61,21 @@ same recipient. Send an urgent blocker or contract change immediately to affecte
 owners, not every agent. Do not send read/command announcements, repeated scope
 updates, courtesy acknowledgments, or ask for evidence already available. A sent
 message is delivery, not a promise that the recipient has acted.
+
+Keep normal spaces and precise names. Brevity comes from removing repeated
+context, not squeezing words together. Native sender, thread and paths already
+carry routing metadata; do not paste another identity/JSON envelope into the body.
+Quote only the evidence needed for the decision; use a retained reference for
+long logs or lists of hashes.
+
+For generated outputs or evolving shared contracts, use a readiness subscription
+and publish all counterparts together. Inspect its current receipt instead of
+repeatedly asking whether source is settled. Reproducible reads can use retained
+source versions; ordinary reading never needs the writer's permission.
+For a scarce test device or other exclusive resource, use the repository's actual
+scheduler. A useful handoff names its request, resource and terminal/running state;
+messages do not allocate the resource or hold the Git window. Notify a dependent
+owner when the result changes their next action, not for every progress step.
 
 ## Natural boundaries and complete content
 

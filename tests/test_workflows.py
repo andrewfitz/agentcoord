@@ -96,6 +96,38 @@ def context(runtime, actor):
     return identity.context_from_token(service.store, bindings[actor]['token'])
 
 
+def test_activity_discovery_defaults_to_current_scopes_with_explicit_history(runtime):
+    rows = []
+    for number in range(3):
+        for actor in (0, 1):
+            rows.append(call(runtime, actor, 'work.activity', {
+                'paths': ['src/parser'], 'state': 'working', 'note': f'Repair step {number}',
+            })['activity'])
+    current = call(runtime, 2, 'work.activities', {'paths': ['src'], 'limit': 1})
+    assert [row['id'] for row in current['activities']] == [rows[-2]['id']]
+    second = call(runtime, 2, 'work.activities', {'paths': ['src'], 'after': current['after']})
+    assert [row['id'] for row in second['activities']] == [rows[-1]['id']]
+    assert second['after'] is None
+    history = call(runtime, 2, 'work.activities', {'paths': ['src'], 'current': False})
+    assert [row['id'] for row in history['activities']] == [row['id'] for row in rows]
+    assert not call(runtime, 2, 'work.activities', {'paths': ['src/par']})['activities']
+
+
+def test_current_discovery_keeps_shared_reports_and_canonical_latest(runtime):
+    service, _ = runtime
+    canonical = call(runtime, 0, 'work.activity', {'paths': ['src/api'], 'note': 'Own API repair'})['activity']
+    shared_context = identity.bind_native(service.store, {
+        'harness': 'codex', 'native_session_id': uid(), 'task': 'shared',
+    }, transport='mcp')['context']
+    with service.store.write() as tx:
+        for note in ('Parser investigation', 'Parser handoff'):
+            shared = work.activity(service, shared_context, {
+                'task': 'parser-report', 'paths': ['src/parser'], 'note': note,
+            }, tx)['activity']
+    current = call(runtime, 2, 'work.activities', {})
+    assert {row['id'] for row in current['activities']} == {canonical['id'], shared['id']}
+
+
 def request(runtime, recipient=1, **extra):
     return call(runtime, 0, 'decision.request', {'recipient': context(runtime, recipient).actor_id,
         'subject': 'Which migration?', 'body': 'Choose the reviewed input', 'paths': ['src/item'], **extra})

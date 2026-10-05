@@ -34,6 +34,11 @@ acknowledgment chains or broadcast unrelated updates. Bundle related nonurgent
 deltas for one recipient; deliver an urgent blocker promptly. Preserve intentional
 fixes by naming their purpose and conditions. Send receipts never echo body text.
 
+Activity discovery defaults to current reported scopes; explicit `current=false`
+or CLI `--no-current` traverses retained history. Neither view grants ownership or
+proves presence. Keep ordinary spacing and meaningful names in message bodies;
+omit duplicate identity envelopes and link long evidence instead of copying it.
+
 Selected messages may be read together with `message-batch`. The bounded response
 has explicit `next_index` over the same ID list and each body's `next_offset`;
 neither reading nor pagination handles messages. Previews expose sender, subject,

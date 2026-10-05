@@ -158,7 +158,7 @@ CATALOG = (
         "work.activities",
         "activities",
         "activities",
-        "Find relevant reported work; paths are discovery labels.",
+        "Find current reported scopes by default; current=false retrieves history. Paths are discovery labels, not ownership.",
         {
             "paths": {
                 "type": "array",
@@ -168,7 +168,7 @@ CATALOG = (
             },
             "after": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-            "current": {"type": "boolean"},
+            "current": {"type": "boolean", "default": True},
         },
         (),
         False,

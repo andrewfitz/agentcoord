@@ -1,3 +1,3 @@
 """Local coordination for agents sharing a workspace."""
 
-__version__ = "0.1.4"
+__version__ = "0.1.5"

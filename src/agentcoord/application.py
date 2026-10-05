@@ -232,7 +232,8 @@ def _presence_batch(service, after):
     with service.store.write() as tx:
         for row, status in observed:
             current = tx.connection.execute(
-                "SELECT * FROM actors WHERE id=?", (row["id"],)
+                """SELECT process_identity_json,current_execution_generation,reported_state
+                FROM actors WHERE id=?""", (row["id"],)
             ).fetchone()
             if not current or (
                 current["process_identity_json"],
