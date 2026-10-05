@@ -16,10 +16,10 @@ Silence, presence and message handling never resolve a decision.
 ## Install and initialize
 
 Install a built wheel into an isolated Python 3.11+ environment, or use the
-generated Homebrew formula in a local tap. `scripts/build_release.py --help`
-describes immutable source releases and pinned dependency resources. Keep each
-release archive available at its recorded URL; update the formula for subsequent
-`brew upgrade` releases. Building a release does not publish or install it.
+generated Homebrew formula in a local tap. The formula installs the application
+and its pinned dependency wheels offline. Keep each immutable installation
+archive available at its recorded URL; update the formula for subsequent
+releases. Building a release does not publish or install it.
 
 From the repository to register:
 
@@ -131,8 +131,42 @@ python3 -m venv .venv
 .venv/bin/python -m build
 ```
 
-`scripts/build_release.py` builds an immutable wheel, source archive and pinned
-Homebrew formula. Supply an unused release directory and the formula destination;
-keep the resulting archives available at their recorded URLs. Install the
-formula through a local tap for local releases. Publishing a remote repository
-or release is a separate action.
+`scripts/build_release.py` builds an immutable application wheel, source archive,
+installation archive and Homebrew formula. Its release environment needs
+`build`, `pip`, `packaging` and the build backend `setuptools>=77`. Supply an unused
+release directory and a formula destination outside this repository:
+
+```sh
+python scripts/build_release.py --output /absolute/new-release \
+  --formula-output /absolute/new-release/agentcoord.rb
+```
+
+`release-lock.json` pins the complete dependency versions, original source
+provenance and official PyPI wheel URLs/checksums for each supported Python ABI
+and platform. It currently covers Homebrew CPython 3.14 on macOS 27 ARM64.
+Dependency declaration changes, incompatible targets, missing wheels and failed
+checksums stop the release. Update the complete lock when dependencies or target
+support change; verify official wheel hashes against their PyPI release records.
+The builder never falls back to compiling a dependency from source.
+
+Dependency wheels are cached under `$XDG_CACHE_HOME/agentcoord/release-wheels`
+(default `~/.cache/agentcoord/release-wheels`), or the directory supplied with
+`--cache`. The cache key includes the complete dependency lock and target;
+every hit is checksum-verified. Application changes reuse those wheels without
+network access. The application builds with the release environment's installed
+backend, then an offline, binary-only resolver checks dependency closure.
+
+The installation archive includes the application wheel, all locked dependency
+wheels and hash-checked requirements. Homebrew creates a private virtualenv and
+installs only those inputs with no network or compilers. `release.json` records
+both archives, wheel provenance and cache hits/downloads. Keep both immutable
+archives and the formula, including older releases; update the local tap formula
+and use `brew reinstall local/agentcoord/agentcoord` for a same-version update.
+This changes installed files; upgrade a running service separately after
+installed verification. Publishing or pushing remains a separate action.
+
+The formula defaults to the installation archive's immutable local file URI.
+For a transferable formula, supply `--installation-url` with the immutable URL
+where that exact bundle will be available. Its checksum stays bound to the local
+bundle. `--source-url` records only the source archive's provenance URL. Neither
+option uploads or publishes an artifact.
