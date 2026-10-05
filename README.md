@@ -1,4 +1,4 @@
-# Agentcoord
+# Agentcoord: Agenetic coordination and inter harness messaging for Codex, Claude, Grok XAI.
 
 Local coordination for coding agents sharing a Git checkout. Claude, Codex,
 Cursor and Grok can discover each other's work, exchange directed messages,
