@@ -1,0 +1,13 @@
+.venv/
+.agent-work/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+.DS_Store

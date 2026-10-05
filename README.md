@@ -118,3 +118,21 @@ it stays fenced until explicitly activated. Service removal retains the database
 Use `doctor --live` to check an installed workspace. Release verification should
 distinguish package tests from actual native-client, platform and migration
 checks; an unavailable check is not a passing result.
+
+## Develop and release
+
+Run development commands from this repository's root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e . pytest ruff build
+.venv/bin/python -m pytest
+.venv/bin/ruff check .
+.venv/bin/python -m build
+```
+
+`scripts/build_release.py` builds an immutable wheel, source archive and pinned
+Homebrew formula. Supply an unused release directory and the formula destination;
+keep the resulting archives available at their recorded URLs. Install the
+formula through a local tap for local releases. Publishing a remote repository
+or release is a separate action.
