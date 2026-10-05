@@ -1476,6 +1476,11 @@ def _origin_guards(client, origin):
             "expected_execution_generation": origin["execution_generation"]}
 
 
+def _write_hook_error(error):
+    diagnostic = f"agentcoord hook failed: {error['code']}: {error['message']}"
+    sys.stderr.write(diagnostic[:4096] + "\n")
+
+
 def main(argv=None, *, client_factory=None):
     args = parser().parse_args(argv)
     try:
@@ -1547,6 +1552,15 @@ def main(argv=None, *, client_factory=None):
                 if hasattr(args, "no_wait") and not args.no_wait:
                     result = wait_operation(client, result, timeout=args.wait_timeout,
                                             context_guards=guards)
+        if getattr(args, "maintenance", None) == "hook":
+            if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
+                raise CoordinationError("INVALID_RESPONSE", "Lifecycle hook returned no valid result")
+            if result["ok"]:
+                if args.harness == "cursor":
+                    sys.stdout.write("{}\n")
+                return 0
+            _write_hook_error(result["error"])
+            return 1
         if result is None:
             return 0
         if "ok" not in result:
@@ -1571,5 +1585,8 @@ def main(argv=None, *, client_factory=None):
             if isinstance(exc, CoordinationError)
             else error_envelope("OPERATION_FAILED", str(exc))
         )
-        sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+        if getattr(args, "maintenance", None) == "hook":
+            _write_hook_error(result["error"])
+        else:
+            sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
         return 1

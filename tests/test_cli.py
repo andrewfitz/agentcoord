@@ -1,5 +1,6 @@
 """Native evidence isolation and usable literal-file command adapters."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -180,6 +181,72 @@ def lifecycle_workspace(tmp_path, monkeypatch):
         lambda harness, payload, **options: {"harness": harness, "native_session_id": "actual"},
     )
     return workspace
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex", "cursor", "grok"])
+@pytest.mark.parametrize("event", ["start", "stop", "end", "failure"])
+def test_lifecycle_cli_success_obeys_native_hook_output_contract(
+    lifecycle_workspace, monkeypatch, capsys, harness, event
+):
+    from agentcoord import cli
+
+    result = {"ok": True, "protocol": 1, "request_id": "lifecycle-event",
+              "data": {"applied": True}, "action_digest": None}
+    monkeypatch.setattr(cli, "_maintenance", lambda *_: result)
+    assert cli.main(["--project", str(lifecycle_workspace.root), "hook", harness, event]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == ("{}\n" if harness == "cursor" else "")
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("harness", ["claude", "codex", "cursor", "grok"])
+@pytest.mark.parametrize("failure", ["returned", "raised", "missing-result"])
+def test_lifecycle_cli_failures_stay_explicit_on_stderr(
+    lifecycle_workspace, monkeypatch, capsys, harness, failure
+):
+    from agentcoord import cli
+    from agentcoord.transport import error_envelope
+
+    def failed_hook(*_):
+        if failure == "raised":
+            raise CoordinationError("UNBOUND_ACTOR", "Native session could not be bound")
+        if failure == "returned":
+            return error_envelope("UNBOUND_ACTOR", "Native session could not be bound")
+        return None
+
+    monkeypatch.setattr(cli, "_maintenance", failed_hook)
+    assert cli.main(["--project", str(lifecycle_workspace.root), "hook", harness, "start"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    code = "INVALID_RESPONSE" if failure == "missing-result" else "UNBOUND_ACTOR"
+    assert code in captured.err
+    if failure != "missing-result":
+        assert "Native session could not be bound" in captured.err
+
+
+def test_lifecycle_cli_failure_diagnostic_is_bounded(lifecycle_workspace, monkeypatch, capsys):
+    from agentcoord import cli
+    from agentcoord.transport import error_envelope
+
+    result = error_envelope("INVALID_ARGUMENT", "bad lifecycle input " + "x" * 10000)
+    monkeypatch.setattr(cli, "_maintenance", lambda *_: result)
+    assert cli.main(["--project", str(lifecycle_workspace.root), "hook", "codex", "stop"]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "" and len(captured.err) == 4097
+    assert "INVALID_ARGUMENT: bad lifecycle input" in captured.err
+
+
+@pytest.mark.parametrize("ok", [True, False])
+def test_ordinary_cli_retains_full_json_envelope(lifecycle_workspace, monkeypatch, capsys, ok):
+    from agentcoord import cli
+    from agentcoord.transport import error_envelope
+
+    result = ({"ok": True, "protocol": 1, "data": {"valid": True}}
+              if ok else error_envelope("OPERATION_FAILED", "Doctor failed"))
+    monkeypatch.setattr(cli, "_maintenance", lambda *_: result)
+    assert cli.main(["--project", str(lifecycle_workspace.root), "doctor"]) == (0 if ok else 1)
+    captured = capsys.readouterr()
+    assert json.loads(captured.out) == result and captured.err == ""
 
 
 @pytest.mark.parametrize("root", ["missing", None, "", " ", 0, {}, [], "relative/path", "\x00"])
