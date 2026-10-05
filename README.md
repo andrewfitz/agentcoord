@@ -124,6 +124,12 @@ accidental identity mixing; they do not sandbox malicious code run by that user.
 
 ## Operation and recovery
 
+Coordination outages do not block independent coding, checks or safe authorized
+commits. Use the installed CLI for an adapter-only failure; during a service
+outage use direct `git commit --only` for reviewed fully owned files, preserving
+unrelated staging. Do not duplicate an uncertain prior commit or bypass real
+ownership conflicts. The installed skill's outage workflow owns the details.
+
 The read-only monitor shows actors, actions, work and complete paginated history
 without consuming messages. Default agent digests have at most three previews;
 full records remain available on demand.

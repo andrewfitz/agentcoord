@@ -86,6 +86,42 @@ If publication is uncertain, retain the operation ID and retry key. Inspect
 commit remains published even if later notification or cleanup fails. Recovery
 must discover the existing outcome, not create another commit.
 
+## Coordination outages
+
+An unavailable adapter, daemon or peer is not a prerequisite failure for ordinary
+coding, checks or an authorized commit. If only the MCP adapter is unavailable,
+use the installed CLI. If the service is unreachable, stop coordination calls
+after the first diagnosis; retry only after a concrete relevant change. Continue
+independent work from current source, diffs and already available evidence. Keep
+a short local task receipt of any important unsent outcome; publish one summary
+at the next natural boundary after connectivity returns, rather than replaying
+every missed activity or sending repeated acknowledgments.
+
+For fully owned files with reviewed changes and required checks complete, use
+Git directly during an outage:
+
+```sh
+git commit --only -m 'Describe the owned change' -- path/to/owned-file
+```
+
+Select every intended owned path explicitly. Newly created files must first be
+added with `git add -- exact/new/paths`; tracked files need no preliminary staging.
+Git's normal locks protect the index and ref update, and `--only` preserves
+unrelated staged work. Honor local version policy and include only an owned
+version change. Keep existing hooks enabled; do not clear lock files, reset
+staging, stage whole folders or bypass genuine ownership conflicts. A post-commit
+notification failure does not undo publication: inspect Git's commit and selected
+diff before deciding whether anything remains to commit.
+
+Do not switch to direct Git when a native commit is already queued/running or
+its publication is uncertain. Reconcile that operation's retained receipt and
+actual Git outcome first. An explicit refusal for conflicting paths or authority
+is not an outage. Mixed owned/peer hunks require their reviewed patch workflow;
+defer only that overlapping slice when safe commit ownership cannot be established.
+Missing peer replies block only work that truly needs their decision, never the
+rest of the task. No new watcher, restart loop or terminal-input messaging is
+part of outage recovery.
+
 ## Native identity, checkpoints and scheduling
 
 `identity` uses actual harness session and process-start evidence. Reconnects

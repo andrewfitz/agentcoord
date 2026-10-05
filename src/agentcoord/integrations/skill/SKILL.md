@@ -31,6 +31,9 @@ local instructions and the user's authorized scope for those choices.
 - When a commit is authorized by the user or repository rules, use native exact
   paths for owned files or a reviewed patch for owned hunks in mixed files.
   Preserve peer edits and unrelated staging. Tests do not hold the commit window.
+- A coordination outage does not block independent edits, checks or authorized
+  commits of fully owned files. Read the outage section below for direct Git
+  fallback; a failed message is not a missing commit permission.
 
 ## Choose the needed reference
 
@@ -38,7 +41,7 @@ local instructions and the user's authorized scope for those choices.
   it covers every command family and when to use it. Use the installed command's
   `--help` for flags and current schemas, rather than loading all references.
 - Read [references/workflows.md](references/workflows.md) for overlap decisions,
-  handoffs, commit ownership, retry recovery, scheduled work or integration
+  handoffs, commit ownership, coordination outages, retry recovery, scheduled work or integration
   activation. Its setup section explains lifecycle hooks and reload/trust checks.
 - Agentcoord's package `protocol.md` owns the detailed protocol. Installed help
   owns command syntax; report a mismatch instead of inventing compatibility.

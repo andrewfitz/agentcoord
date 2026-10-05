@@ -27,6 +27,9 @@ protocol.md owns coordination behavior.
 - Commit only owned paths or reviewed owned hunks. Use installed Agentcoord
   commit execution when bound; tests never hold its commit window. Preserve
   unrelated staged work. Do not push or publish without user authorization.
+- If coordination is unreachable, continue independent work and authorized
+  fully owned-file commits using the protocol's direct Git outage procedure.
+  Stop unchanged retries; defer only real overlaps or uncertain prior publication.
 - Release archives are immutable. Build a new release and update the Homebrew
   formula for a package change; never overwrite a retained release artifact.
   Source readiness, installed verification and live activation are separate.

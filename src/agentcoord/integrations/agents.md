@@ -8,3 +8,8 @@ edits and staging; folder scopes and historical presence grant no edit authority
 Handle actions at natural work boundaries. Reads and ordinary commands need no
 declaration, inbox polling, heartbeat or coordination wrapper. Use authenticated
 native identity; never select an actor from a label or inject terminal input.
+
+Coordination availability is not a prerequisite for independent coding, checks
+or authorized owned-file commits. If it is unavailable, continue useful work;
+use the skill's outage workflow for direct Git commits that preserve peer staging.
+Block only an actual unresolved overlap or an uncertain prior Git publication.

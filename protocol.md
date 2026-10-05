@@ -83,6 +83,16 @@ Unrelated staging and peer hunks are preserved. A published commit remains
 published even when a later notification or cleanup fails. Inspect its receipt
 before another attempt. Commits do not submit or await tests.
 
+Coordination outages do not veto independent edits, checks or authorized commits.
+An adapter-only failure can use the installed CLI. An unreachable service stops
+coordination calls, not useful work: for reviewed fully owned paths, direct
+`git commit --only -m MESSAGE -- PATH ...` preserves unrelated staging under Git's
+normal locks. Add only exact owned new paths first when needed; retain local
+version rules and existing hooks. Never bypass real conflicts or switch commit
+mechanisms while a prior publication is queued, running or uncertain. Defer only
+the dependent overlap, retain a short local outcome receipt, then publish one
+summary after connectivity returns. No polling or repeated status/message calls.
+
 Scheduled native resumes require explicit opt-in, supported native target and
 verified offline execution identity. Possible external effects whose outcomes
 are uncertain require reconciliation; elapsed leases never justify a second
