@@ -45,6 +45,13 @@ view retains historical scopes. A materially new activity scope returns up to
 three advisory peer scopes in `scope_context`. This sends no messages and grants
 no locks. Folder overlap alone needs no question, permission or wait.
 
+For a non-obvious settled fix that peers might undo while your larger task is
+still running, record one scoped `intent` with its purpose and preservation
+conditions. Mark that intent completed when the fix settles; this does not complete
+the actor's task. Use activity/readiness evidence for its test or commit receipt.
+Skip intent records for routine edits whose reason is already clear. No message
+is needed unless a specific peer must change their next action.
+
 `evidence --paths ... --limit 3` also returns recent completed `outcomes`, newest
 first, even after their author changes tasks or becomes historical. Continue
 older outcomes with `--outcomes-before`; evidence pages allow at most 20 records

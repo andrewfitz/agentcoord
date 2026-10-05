@@ -21,6 +21,8 @@ Batch related nonurgent updates for the same recipient; do not delay a blocker.
 - Publish `activity` once when starting or materially changing coding scope,
   a long test/audit, a blocker, a handoff or completion. Record useful intent,
   paths and evidence; paths help discovery and do not reserve edits.
+  Supply a concrete task name on first use (`--task` in CLI); later calls can
+  reuse the assigned task. This belongs in the scope call, not a separate handshake.
 - Before overlapping edits, inspect the current diff and relevant `activities`
   and `evidence`. Preserve intentional peer fixes. Ask the responsible owner
   only when a real dependency or shared contract needs a decision.
@@ -44,6 +46,10 @@ Batch related nonurgent updates for the same recipient; do not delay a blocker.
 A new scope's `scope_context` is advisory; folder overlap alone needs no message
 or wait. `evidence` includes recent completed outcomes after owners change tasks.
 Read selected details when previews mark omitted evidence, note or paths.
+
+For a non-obvious settled fix that peers might undo before your task finishes,
+record one scoped `intent` with its purpose/invariants. Completing an intent does
+not complete the actor's task. Routine edits need no extra records or messages.
 
 For missing native binding, inspect the failure once and correct a confirmed
 setup/trust cause before retrying. Do not guess identities or try repeated

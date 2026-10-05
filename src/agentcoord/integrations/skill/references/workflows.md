@@ -8,7 +8,9 @@ still owns placement, testing, commit expectations and versioning.
 ## Scope, overlap and decisions
 
 Publish one `activity` for meaningful starting scope and update it only when the
-scope or outcome materially changes. Before editing overlapping work, read the
+scope or outcome materially changes. Include a task name in the first activity;
+a fresh native session has no assigned task yet. No separate identity/status call
+is required merely to start work. Before editing overlapping work, read the
 current Git diff and relevant `activities --paths ...`/`evidence` (current scopes
 are the default). Use `activities --no-current` only when an earlier intentional
 change needs explanation.
@@ -35,6 +37,15 @@ of making an extra discovery call when it already supplies enough context.
 Folder overlap alone is not a conflict. `evidence` includes recent completed
 outcomes after their owners move on; inspect the selected activity detail before
 reverting a deliberate fix. Follow explicit path cursors and omitted-content flags.
+
+## Preserve a deliberate fix during a longer task
+
+If a non-obvious settled fix could be undone by overlapping work, publish one
+`intent` for the relevant paths with its purpose and invariants. Completing the
+intent does not complete your actor's task. This retains the reasoning after your
+activity scope moves on; use activity/readiness evidence for checks or commits.
+Routine edits need no extra intent record. Notify a peer only if they must change
+an action, rather than announcing the fix to every agent.
 
 ## Useful messages
 
