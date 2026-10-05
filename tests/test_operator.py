@@ -159,9 +159,15 @@ def test_assembled_work_pages_do_not_repeat_finished_sections(tmp_path):
         result = service.execute(actor, Call("work.activity", {"note": f"Evidence {index}", "paths": ["src/file"], "state": "working"}, f"work-page-{index}"))
         assert result["ok"], result
     context = Context(workspace_id, None, operator=True, transport="operator")
-    data = invoke(service, context, "operator.snapshot", {"section": "work", "limit": 2})
+    data = invoke(service, context, "operator.snapshot", {"section": "work", "view": "all", "limit": 2})
     ids = [item["id"] for item in data["activities"]]
     while data["cursor"]:
-        data = invoke(service, context, "operator.snapshot", {"section": "work", "limit": 2, "cursor": data["cursor"]})
+        data = invoke(service, context, "operator.snapshot", {"section": "work", "view": "all", "limit": 2, "cursor": data["cursor"]})
         ids.extend(item["id"] for item in data["activities"])
     assert len(ids) == len(set(ids)) == 6
+    current = invoke(service, context, "operator.snapshot", {"section": "work"})
+    assert len(current["activities"]) == 1
+    with service.store.write() as tx:
+        tx.connection.execute("UPDATE actors SET archived=1 WHERE id=?", (actor.actor_id,))
+    assert not invoke(service, context, "operator.snapshot", {"section": "work"})["activities"]
+    assert invoke(service, context, "operator.snapshot", {"section": "work", "view": "all"})["counts"]["activities"] == 6

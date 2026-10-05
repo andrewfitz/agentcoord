@@ -303,7 +303,17 @@ def apply_lifecycle_event(tx, context, *, state, execution_generation, event, no
     if state not in {"working", "idle", "waiting", "blocked", "paused", "completed"}:
         raise CoordinationError("INVALID_ARGUMENT", "Invalid lifecycle state")
     if execution_generation is None or execution_generation != actor["current_execution_generation"]:
-        tx.event("identity", "ambiguous_event" if execution_generation is None else "stale_event", actor["id"], actor["id"], {"event": event})
+        kind = "ambiguous_event" if execution_generation is None else "stale_event"
+        # Repeated uncorrelated hooks add no execution proof. Retain the first
+        # observation, without manufacturing another state transition or event.
+        previous = tx.connection.execute("""SELECT kind,metadata_json FROM events
+            WHERE actor_id=? AND domain='identity' ORDER BY sequence DESC LIMIT 1""",
+            (actor["id"],)).fetchone()
+        metadata = {"event": event}
+        if kind == "stale_event":
+            metadata["execution_generation"] = execution_generation
+        if not previous or (previous["kind"], previous["metadata_json"]) != (kind, canonical_json(metadata)):
+            tx.event("identity", kind, actor["id"], actor["id"], metadata)
         return {"applied": False, "reason": "ambiguous_generation" if execution_generation is None else "stale_generation"}
     if actor["reported_state"] in {"paused", "completed"} and state not in {"paused", "completed"}:
         return {"applied": False, "reason": "explicit_resume_required"}

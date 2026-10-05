@@ -50,6 +50,13 @@ accept artifact readiness. `sync` previews at most three actions; full records
 and explicit continuation remain available. Do not turn a display limit into a
 limit on the work requested by the user.
 
+Activity discovery returns bounded previews; `evidence-detail --kind activity`
+retrieves exact notes/evidence and paginated paths. Follow `paths_after` with
+`--paths-after`. `evidence` returns recent completed `outcomes` newest first;
+`--outcomes-before` continues older outcomes. Evidence pages allow at most 20
+records per section. New activity scopes include advisory `scope_context` with
+no automatic peer messages or reservations.
+
 ## Dependency decisions
 
 | Command | When to use it |

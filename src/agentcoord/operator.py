@@ -15,6 +15,7 @@ from .core import (
     normalize_paths,
     validate_fields,
 )
+from .work import CURRENT_ACTIVITY_IDS
 
 PAGE_BYTES = 100_000
 
@@ -258,6 +259,8 @@ def snapshot(service, context, arguments, tx):
                 values.extend(scoped)
             if extra:
                 clauses.append(extra)
+            if name == "activities" and view == "current":
+                clauses.append(f"w.id IN ({CURRENT_ACTIVITY_IDS})")
             items, page = _page(tx, table=table, select=f"{key} AS page_key,{select}", clauses=clauses, values=values, key=key, position=positions.get(name), limit=limit, fingerprint=fingerprint, section=name)
             for item in items:
                 item.pop("page_key")

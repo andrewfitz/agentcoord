@@ -30,6 +30,12 @@ only with current scoped authority. A response from an old task generation is
 a proposal: inspect the exact proposal with `request-get` and reconcile it
 explicitly under current authority before treating it as a decision.
 
+A materially new scope returns a small advisory `scope_context`; use it instead
+of making an extra discovery call when it already supplies enough context.
+Folder overlap alone is not a conflict. `evidence` includes recent completed
+outcomes after their owners move on; inspect the selected activity detail before
+reverting a deliberate fix. Follow explicit path cursors and omitted-content flags.
+
 ## Useful messages
 
 Send when the recipient needs to change an action or answer a real decision.
@@ -143,6 +149,14 @@ If publication is uncertain, retain the operation ID and retry key. Inspect
 `operation get`, `receipt` and `commit reconcile` before retrying. A published
 commit remains published even if later notification or cleanup fails. Recovery
 must discover the existing outcome, not create another commit.
+
+## Missing native binding
+
+For `UNBOUND_ACTOR`, inspect the first failure once. Correct a confirmed missing
+lifecycle/trust/setup cause before retrying; a different environment spelling or
+invented session ID cannot provide proof. If both tools and CLI lack supported
+native context, continue independent work and the safe Git outage procedure
+below. Report the limitation once. No heartbeat, inbox or diagnosis loop.
 
 ## Coordination outages
 

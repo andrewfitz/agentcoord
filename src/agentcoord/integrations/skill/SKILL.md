@@ -41,6 +41,15 @@ Batch related nonurgent updates for the same recipient; do not delay a blocker.
   commits of fully owned files. Read the outage section below for direct Git
   fallback; a failed message is not a missing commit permission.
 
+A new scope's `scope_context` is advisory; folder overlap alone needs no message
+or wait. `evidence` includes recent completed outcomes after owners change tasks.
+Read selected details when previews mark omitted evidence, note or paths.
+
+For missing native binding, inspect the failure once and correct a confirmed
+setup/trust cause before retrying. Do not guess identities or try repeated
+environment variants. If proof remains unavailable, continue independent work
+and the documented safe Git outage workflow; report the limitation once.
+
 ## Choose the needed reference
 
 - Read [references/commands.md](references/commands.md) to choose a command;

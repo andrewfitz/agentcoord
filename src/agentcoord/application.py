@@ -253,13 +253,19 @@ def _presence_batch(service, after):
                     "unknown" if status == "unknown" else "verified",
                 ),
             )
-            if state == "offline" and current["reported_state"] == "completed":
-                tx.connection.execute(
+            if state == "offline":
+                archived = tx.connection.execute(
                     """UPDATE actors SET archived=1 WHERE id=? AND NOT EXISTS
                     (SELECT 1 FROM bindings WHERE actor_id=? AND revoked_us IS NULL) AND NOT EXISTS
-                    (SELECT 1 FROM operations WHERE actor_id=? AND state IN ('queued','running','uncertain'))""",
-                    (row["id"], row["id"], row["id"]),
+                    (SELECT 1 FROM operations WHERE actor_id=? AND state IN ('queued','running','uncertain'))
+                    AND NOT EXISTS (SELECT 1 FROM jobs WHERE actor_id=? AND state IN ('pending','running','uncertain'))
+                    AND NOT EXISTS (SELECT 1 FROM commit_grants g JOIN commit_admissions a ON a.id=g.admission_id
+                        WHERE a.actor_id=? AND g.state IN ('active','uncertain'))""",
+                    (row["id"], row["id"], row["id"], row["id"], row["id"]),
                 )
+                if archived.rowcount:
+                    tx.connection.execute("DELETE FROM current_activity WHERE actor_id=?", (row["id"],))
+                    tx.connection.execute("DELETE FROM shared_activity_current WHERE actor_id=?", (row["id"],))
     return rows[-1]["id"]
 
 

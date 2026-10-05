@@ -39,6 +39,26 @@ or CLI `--no-current` traverses retained history. Neither view grants ownership 
 proves presence. Keep ordinary spacing and meaningful names in message bodies;
 omit duplicate identity envelopes and link long evidence instead of copying it.
 
+Current scope discovery excludes archived actors and obsolete canonical task
+assignments. The operator's current work view uses the same definition; its all
+view retains historical scopes. A materially new activity scope returns up to
+three advisory peer scopes in `scope_context`. This sends no messages and grants
+no locks. Folder overlap alone needs no question, permission or wait.
+
+`evidence --paths ... --limit 3` also returns recent completed `outcomes`, newest
+first, even after their author changes tasks or becomes historical. Continue
+older outcomes with `--outcomes-before`; evidence pages allow at most 20 records
+per section. Before replacing an intentional fix, retrieve the relevant activity
+detail and inspect current source. Preservation conditions are useful context,
+not permanent veto power over justified subsequent fixes.
+
+Activity discovery and mutation receipts are bounded previews. `note_excerpt`,
+`evidence_omitted`, `paths_more` and byte/count fields identify omitted content;
+never treat a preview as the complete scope or evidence. Use
+`evidence-detail --kind activity --id ...`, following `paths_after` with
+`--paths-after` for complete path pages. Readiness details retain complete evidence.
+Repeating an identical intent does not append another event or change its timestamp.
+
 Selected messages may be read together with `message-batch`. The bounded response
 has explicit `next_index` over the same ID list and each body's `next_offset`;
 neither reading nor pagination handles messages. Previews expose sender, subject,
@@ -110,6 +130,21 @@ version rules and existing hooks. Never bypass real conflicts or switch commit
 mechanisms while a prior publication is queued, running or uncertain. Defer only
 the dependent overlap, retain a short local outcome receipt, then publish one
 summary after connectivity returns. No polling or repeated status/message calls.
+
+For `UNBOUND_ACTOR`, inspect the native binding/setup failure once. The installed
+CLI is useful only when its supported native context is available; guessing
+session IDs, adding labels or repeating environment variants cannot repair missing
+proof. Correct a confirmed hook/trust/configuration cause before retrying. If that
+cannot be done in this session, continue independent work and the owned-file Git
+outage procedure. Record the binding limitation once; do not start a diagnosis
+loop or refuse safe work because it cannot be messaged.
+
+Repeated identical ambiguous lifecycle observations retain their first event and
+remain uncertain. They cannot complete work, release grants or prove absence.
+Verified offline sessions with no bindings, unsettled operations, protected commit
+grants or pending scheduled jobs leave current-scope indexes. Retirement does not
+complete their tasks or grant overwrite/resume authority; history and pending
+records remain. Unknown presence is not evidence for retirement.
 
 Scheduled native resumes require explicit opt-in, supported native target and
 verified offline execution identity. Possible external effects whose outcomes

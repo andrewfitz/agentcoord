@@ -208,3 +208,27 @@ def test_profile_late_handler_outcome_is_retained_after_join(tmp_path):
     assert rows[0]["phase"] == "stress"
     assert rows[0]["operation"] == "message.send"
     assert observer.snapshot()["ok"]
+
+
+def test_short_soak_exercises_mixed_socket_operations_and_cannot_certify_one_hour(tmp_path):
+    benchmark = benchmark_module()
+    report = benchmark.workload(output=tmp_path/'soak.json', clients=4, operations_per_client=10,
+        warm_operations=12, inactive_actors=12, history_messages=24, smoke=True, soak_seconds=2)
+    assert report['ok'], report['errors']
+    assert report['phases']['soak']['operations'] >= 30
+    assert report['phases']['soak']['elapsed_seconds'] >= 2
+    assert len(report['phases']['soak']['samples']) == 2
+    assert not report['stage_one_soak']['one_hour_100_clients']
+    assert not report['stage_one_soak_passed']
+    assert report['receipt_oracle']['defects'] == []
+    assert not report['phases']['soak']['errors']
+
+
+def test_cli_soak_failure_is_a_failing_exit_even_when_ordinary_gates_pass(monkeypatch, tmp_path):
+    benchmark = benchmark_module()
+    monkeypatch.setattr(benchmark, 'workload', lambda **_: {
+        'ok': True, 'phases': {}, 'errors': [], 'acceptance_passed': True,
+        'stage_one_soak_passed': False,
+    })
+    assert benchmark.main(['--output', str(tmp_path/'report.json'), '--soak-seconds', '3600']) == 1
+    assert benchmark.main(['--output', str(tmp_path/'report.json'), '--smoke', '--soak-seconds', '2']) == 0

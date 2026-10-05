@@ -20,6 +20,10 @@ Reads and ordinary shell commands need no announcements, wrappers or locks.
 Folder scopes describe work; they do not reserve files. No chat injection,
 per-command coordination hooks, agent heartbeat calls or inbox polling loops.
 
+The [development specification](distributed-spec.md) proposes two delivery stages:
+single-repository improvements, followed by multiple repositories and network
+coordination. It is a design draft, not a list of new released features.
+
 ## Requirements and supported platforms
 
 | Component | Requirement |
@@ -54,7 +58,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.5/agentcoord-0.1.5-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.6/agentcoord-0.1.6-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -69,7 +73,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.5/agentcoord-0.1.5-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.6/agentcoord-0.1.6-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -84,7 +88,7 @@ local tap, not a formula in Homebrew core:
 ```sh
 brew tap-new local/agentcoord
 curl --fail --location \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.5/agentcoord.rb \
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.6/agentcoord.rb \
   --output "$(brew --repository local/agentcoord)/Formula/agentcoord.rb"
 brew install local/agentcoord/agentcoord
 agentcoord --help
@@ -263,6 +267,12 @@ Replace uppercase UUID placeholders with actual returned values. Use `--body-fil
 or `--message-file` for literal multiline content. Use the relevant command's
 `--help` for its complete schema; not every workflow needs every command.
 
+Current scope views exclude archived actors and obsolete assignments. A new scope
+returns a small advisory overlap summary; folder overlap alone sends no messages
+and blocks no work. `evidence` also finds recent completed fixes after owners move
+on. Discovery uses marked previews; exact notes, evidence and paginated paths
+remain available through `evidence-detail`.
+
 ## Commands and protocol
 
 The [shared command reference](src/agentcoord/integrations/skill/references/commands.md)
@@ -404,6 +414,22 @@ template. Its `Agent coordination: open monitor` action routes to Herdr's select
 workspace. The monitor is read-only and does not consume agent messages.
 
 ## Development and release builds
+
+The isolated workload uses a real daemon and distinct socket clients with
+synthetic identities. It never connects to your registered workspaces. Use
+`--smoke` for a short correctness check; it cannot certify the full load target.
+The local Stage 1 soak holds 100 connected clients for one hour at 20 operations
+per second, recording latency, memory, queue health, database growth and exact
+mutation receipts:
+
+```sh
+.venv/bin/python benchmarks/workload.py --smoke --output /tmp/agentcoord-smoke.json
+.venv/bin/python benchmarks/workload.py --soak-seconds 3600 --output /tmp/agentcoord-soak.json
+```
+
+The full soak fails its exit status if correctness or performance gates fail.
+Its synthetic identities are not evidence of native harness activation; verify
+actual harness setup and a directed cross-harness exchange separately.
 
 ```sh
 git clone https://github.com/andrewfitz/agentcoord.git

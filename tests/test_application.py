@@ -241,3 +241,77 @@ def test_interrupted_atomic_readiness_is_failed_and_inspectable(service):
         call(sender, "operation.ack", {"operation_id": result["id"], "version": result["sequence"]})
         assert call(sender, "message.sync")["total"] == 0
         assert terminal(sender, result["id"])["state"] == "failed"
+
+
+def test_completed_offline_scope_cleanup_preserves_history_and_live_binding(service, monkeypatch):
+    from agentcoord import application, identity
+    from agentcoord.core import Call
+    owner = identity.bind_native(service.store, {'harness': 'codex', 'native_session_id': 'retired-owner', 'task': 'parser-repair'})['context']
+    result = service.execute(owner, Call('work.activity', {'note': 'Intentional repair',
+        'paths': ['src/parser.py'], 'state': 'completed'}, 'completed-scope'))
+    assert result['ok'], result
+    monkeypatch.setattr(identity, 'process_status', lambda *_: 'gone')
+    # A missing proof remains unknown, so supply a fixture observation explicitly.
+    with service.store.write() as tx:
+        tx.connection.execute("UPDATE actors SET process_identity_json='{}' WHERE id=?", (owner.actor_id,))
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        assert not tx.connection.execute('SELECT archived FROM actors WHERE id=?', (owner.actor_id,)).fetchone()[0]
+    with service.store.write() as tx:
+        tx.connection.execute('DELETE FROM bindings WHERE actor_id=?', (owner.actor_id,))
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        assert tx.connection.execute('SELECT archived FROM actors WHERE id=?', (owner.actor_id,)).fetchone()[0]
+        assert not tx.connection.execute('SELECT 1 FROM current_activity WHERE actor_id=?', (owner.actor_id,)).fetchone()
+        assert tx.connection.execute('SELECT 1 FROM activities WHERE id=?', (result['data']['activity']['id'],)).fetchone()
+
+
+@pytest.mark.parametrize('observation', ['gone', 'unknown'])
+def test_abandoned_working_session_retirement_requires_verified_absence(service, monkeypatch, observation):
+    from agentcoord import application, identity
+    from agentcoord.core import Call
+    owner = identity.bind_native(service.store, {'harness': 'claude', 'native_session_id': 'abandoned-owner',
+                                                'task': 'interrupted-task'})['context']
+    result = service.execute(owner, Call('work.activity', {'note': 'Unfinished repair',
+        'paths': ['src/parser.py']}, 'unfinished-scope'))
+    assert result['ok'], result
+    monkeypatch.setattr(identity, 'process_status', lambda *_: observation)
+    with service.store.write() as tx:
+        tx.connection.execute("UPDATE actors SET process_identity_json='{}' WHERE id=?", (owner.actor_id,))
+        tx.connection.execute('DELETE FROM bindings WHERE actor_id=?', (owner.actor_id,))
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        actor = tx.connection.execute('SELECT archived,reported_state FROM actors WHERE id=?', (owner.actor_id,)).fetchone()
+        assert bool(actor['archived']) == (observation == 'gone')
+        assert actor['reported_state'] == 'working'
+        assert tx.connection.execute('SELECT 1 FROM activities WHERE id=?', (result['data']['activity']['id'],)).fetchone()
+
+
+@pytest.mark.parametrize('protection', ['job', 'operation', 'commit'])
+def test_offline_retirement_preserves_pending_execution_authority(service, monkeypatch, protection):
+    from agentcoord import application, identity
+    from agentcoord.core import Call
+    owner = identity.bind_native(service.store, {'harness': 'codex', 'native_session_id': 'protected-owner',
+                                                'task': 'protected-task'})['context']
+    if protection == 'job':
+        queued = service.execute(owner, Call('job.schedule', {'kind': 'reminder',
+            'due_us': time.time_ns() // 1000 + 3600_000000, 'note': 'Keep scheduled work'}, 'protected-job'))
+        assert queued['ok'], queued
+    elif protection == 'operation':
+        (service.workspace.root / 'fixture.txt').write_text('pending input')
+        queued = service.execute(owner, Call('readiness.publish', {'artifact': 'fixture',
+            'paths': ['fixture.txt'], 'evidence': 'Await calculation'}, 'protected-operation'))
+        assert queued['ok'], queued
+    with service.store.write() as tx:
+        if protection == 'commit':
+            admission, grant = str(uuid.uuid4()), str(uuid.uuid4())
+            tx.connection.execute("INSERT INTO commit_admissions VALUES (?,?,?,'manual','granted',?,?,?)",
+                (admission, owner.actor_id, owner.task_generation, tx.now_us, tx.now_us + 60_000000, grant))
+            tx.connection.execute("INSERT INTO commit_grants VALUES (?,?,?,'active',?,NULL)",
+                (grant, admission, '{}', tx.now_us))
+        tx.connection.execute("UPDATE actors SET process_identity_json='{}' WHERE id=?", (owner.actor_id,))
+        tx.connection.execute('DELETE FROM bindings WHERE actor_id=?', (owner.actor_id,))
+    monkeypatch.setattr(identity, 'process_status', lambda *_: 'gone')
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        assert not tx.connection.execute('SELECT archived FROM actors WHERE id=?', (owner.actor_id,)).fetchone()[0]

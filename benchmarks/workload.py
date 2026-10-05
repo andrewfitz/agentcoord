@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 import uuid
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 
 BODY = "Synthetic historical body"
@@ -374,11 +374,63 @@ def cold_client(spec_path):
     return 0
 
 
+def soak(connected, actors, invoke, sample, *, seconds, rate):
+    """Sustained real socket traffic; synthetic actors are not native evidence."""
+    started = time.monotonic()
+    deadline = started + seconds
+    messages, decisions = deque(), deque()
+    samples = [sample()]
+    next_sample = started + 60
+    steps = 0
+    while time.monotonic() < deadline:
+        owner = steps % len(connected)
+        actor = actors[owner]
+        key = f"soak-{steps}"
+        choice = steps % 6
+        if choice == 0:
+            invoke(connected[owner], actor, "work.activity", {
+                "paths": ["fixture.txt"], "note": f"Synthetic coherent milestone {steps}"}, key, "soak")
+        elif choice == 1:
+            recipient = (owner + 1) % len(connected)
+            result = invoke(connected[owner], actor, "message.send", {
+                "recipients": [actors[recipient]["id"]], "kind": "FINDING", "subject": "Soak fixture",
+                "body": MEASURED_BODY, "paths": ["fixture.txt"]}, key, "soak")
+            messages.append((recipient, result["id"]))
+        elif choice == 2 and messages:
+            recipient, message = messages.popleft()
+            invoke(connected[recipient], actors[recipient], "message.consume", {"id": message}, key, "soak")
+        elif choice == 3:
+            result = invoke(connected[owner], actor, "decision.request", {
+                "recipient": actors[(owner + 1) % len(connected)]["id"], "subject": "Soak dependency",
+                "body": "Synthetic cancellation will settle this fixture", "paths": ["fixture.txt"]}, key, "soak")
+            decisions.append((owner, result["id"]))
+        elif choice == 4 and decisions:
+            requester, decision = decisions.popleft()
+            invoke(connected[requester], actors[requester], "decision.resolve", {
+                "id": decision, "state": "cancelled", "response": "Synthetic cancellation"}, key, "soak")
+        else:
+            invoke(connected[owner], actor, "work.evidence", {"paths": ["fixture.txt"], "limit": 3}, None, "soak")
+        steps += 1
+        now = time.monotonic()
+        if now >= next_sample:
+            samples.append(sample())
+            next_sample = now + 60
+            print(json.dumps({"phase": "soak", "elapsed_seconds": round(now-started, 1),
+                              "operations": steps, "sample": samples[-1]}), flush=True)
+        time.sleep(max(0, min(deadline - now, started + steps / rate - now)))
+    samples.append(sample())
+    return {"elapsed_seconds": time.monotonic() - started, "target_rate": rate,
+            "operations": steps, "samples": samples, "unsettled_fixture_messages": len(messages),
+            "unsettled_fixture_decisions": len(decisions)}
+
+
 def workload(*, output, clients=100, operations_per_client=10, warm_operations=1000,
-             inactive_actors=10000, history_messages=100000, smoke=False):
+             inactive_actors=10000, history_messages=100000, smoke=False, soak_seconds=0, soak_rate=20):
     from agentcoord import application
     from agentcoord.config import register_workspace
     from agentcoord.transport import Client
+    if type(soak_seconds) is not int or not 0 <= soak_seconds <= 86400 or type(soak_rate) is not int or not 1 <= soak_rate <= 100:
+        raise ValueError("Soak duration/rate must be bounded integers")
     output = Path(output).resolve()
     output.parent.mkdir(parents=True,exist_ok=True)
     accepted = []
@@ -389,7 +441,8 @@ def workload(*, output, clients=100, operations_per_client=10, warm_operations=1
     report = {"schema_version":1,"smoke":smoke,"host":{"platform":platform.platform(),"python":sys.version},
               "workload":{"clients":clients,"operations_per_client":operations_per_client,"warm_operations":warm_operations,
                           "inactive_actors":inactive_actors,"history_messages":history_messages,
-                          "historical_body_bytes":len(BODY.encode()),"warm_send_body_bytes":len(MEASURED_BODY.encode())},
+                          "historical_body_bytes":len(BODY.encode()),"warm_send_body_bytes":len(MEASURED_BODY.encode()),
+                          "soak_seconds":soak_seconds,"soak_rate":soak_rate},
               "limitations":["All actors/native session IDs are synthetic; this is not installed native-client/lifecycle evidence.",
                              "Seeding is offline and excluded from timing; historical recipient records are handled.",
                              "Service resource metrics include profiling/snapshot observer overhead; driver resources are separate.",
@@ -426,7 +479,7 @@ def workload(*, output, clients=100, operations_per_client=10, warm_operations=1
         atomic_json(spec_path,{"workspace_id":workspace.id,"state_root":str(scratch/"state"),"phase":str(phase_path),
                               "profile":str(profile_path),"stats":str(stats_path),
                               "profile_capacity":warm_operations+(3 if smoke else 30)+clients*operations_per_client*2
-                                  +min(4,clients)*3+4096})
+                                  +min(4,clients)*3+4096+soak_seconds*soak_rate})
         source_root = Path(application.__file__).resolve().parent
         report["source_sha256"] = {path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.glob("*.py")}
         report["benchmark_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
@@ -611,6 +664,18 @@ def workload(*, output, clients=100, operations_per_client=10, warm_operations=1
                     time.sleep(.05)
                 phases["stress"]["slow_results"] = rows
                 phases["stress"]["job_results"] = job_rows
+                if soak_seconds:
+                    phase("soak")
+                    def sample_soak():
+                        stats = json.loads(stats_path.read_text())
+                        sizes = {suffix or "main": Path(str(workspace.database_path)+suffix).stat().st_size
+                                 if Path(str(workspace.database_path)+suffix).exists() else 0 for suffix in ("", "-wal", "-shm")}
+                        return {"elapsed_process_cpu_seconds": stats["usage"]["cpu_seconds"],
+                                "peak_rss_bytes": stats["usage"]["peak_rss_bytes"],
+                                "health": stats["health"], "database_bytes": sizes}
+                    phases["soak"] = soak(connected, actor_fixture, call, sample_soak,
+                                          seconds=soak_seconds, rate=soak_rate)
+                    phases["soak"].update(summarize([r for r in all_observations if r["phase"]=="soak"]))
                 for client in connected:
                     client.close()
                 connected.clear()
@@ -703,6 +768,16 @@ def workload(*, output, clients=100, operations_per_client=10, warm_operations=1
                     =={path.name:hashlib.sha256(path.read_bytes()).hexdigest() for path in source_root.glob("*.py")},
                 "correctness_and_resource_observations":report["ok"]}
             report["acceptance_passed"] = all(report["acceptance"].values())
+            if soak_seconds:
+                long_run = phases.get("soak", {})
+                report["stage_one_soak"] = {
+                    "one_hour_100_clients": clients == 100 and long_run.get("elapsed_seconds", 0) >= 3600,
+                    "sustained_20_ops_per_second": soak_rate == 20 and long_run.get("operations", 0) >= soak_seconds * 20 * .9,
+                    "service_p95_under_100ms": long_run.get("service_ms", {}).get("p95", float("inf")) < 100,
+                    "peak_rss_under_256MiB": report.get("service_resources", {}).get("usage", {}).get("peak_rss_bytes", float("inf")) < 256*1024*1024,
+                    "no_rejections_or_errors": "errors" in long_run and not long_run["errors"] and long_run.get("rejected_admissions", 1) == 0 and report["ok"],
+                }
+                report["stage_one_soak_passed"] = all(report["stage_one_soak"].values())
             atomic_json(output,report)
     return report
 
@@ -711,6 +786,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output",type=Path)
     parser.add_argument("--smoke",action="store_true")
+    parser.add_argument("--soak-seconds", type=int, default=0)
+    parser.add_argument("--soak-rate", type=int, default=20)
     parser.add_argument("--server",type=Path,help=argparse.SUPPRESS)
     parser.add_argument("--client",type=Path,help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
@@ -721,9 +798,12 @@ def main(argv=None):
     if args.output is None:
         parser.error("--output is required")
     options = {"clients":4,"operations_per_client":10,"warm_operations":12,"inactive_actors":12,"history_messages":24} if args.smoke else{}
-    report = workload(output=args.output,smoke=args.smoke,**options)
+    report = workload(output=args.output,smoke=args.smoke,soak_seconds=args.soak_seconds,soak_rate=args.soak_rate,**options)
     print(json.dumps({"ok":report["ok"],"output":str(args.output),"phases":report["phases"],"errors":report["errors"]},indent=2))
-    return 0 if report["ok"] and (args.smoke or report["acceptance_passed"]) else 1
+    passed = report["ok"] and (args.smoke or report["acceptance_passed"])
+    if args.soak_seconds and not args.smoke:
+        passed = passed and report["stage_one_soak_passed"]
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

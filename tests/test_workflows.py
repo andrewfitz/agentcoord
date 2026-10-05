@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -75,7 +76,7 @@ def runtime(tmp_path):
     store.initialize((identity.SCHEMA, work.SCHEMA, messages.SCHEMA,
                       decisions.SCHEMA, readiness.SCHEMA, pending.SCHEMA))
     service = Service(store, SimpleNamespace(id=store.workspace_id, root=tmp_path), Config(),
-        (*work.operations(), *messages.operations(), *decisions.operations(), *readiness.operations()),
+        (*identity.operations(), *work.operations(), *messages.operations(), *decisions.operations(), *readiness.operations()),
         {'slow_handlers': readiness.slow_handlers()})
     bindings = [identity.bind_native(store, {'harness': 'codex', 'native_session_id': uid(),
                                            'task': name}) for name in ('requester', 'supplier', 'observer')]
@@ -111,6 +112,131 @@ def test_activity_discovery_defaults_to_current_scopes_with_explicit_history(run
     history = call(runtime, 2, 'work.activities', {'paths': ['src'], 'current': False})
     assert [row['id'] for row in history['activities']] == [row['id'] for row in rows]
     assert not call(runtime, 2, 'work.activities', {'paths': ['src/par']})['activities']
+
+
+def test_completed_fix_remains_discoverable_after_owner_changes_task(runtime):
+    first = call(runtime, 1, 'work.activity', {'paths': ['src/parser.py'], 'state': 'completed',
+        'note': 'Keep quoted commas intact', 'evidence': {'test': 'parser-regression'}})['activity']
+    call(runtime, 1, 'identity.checkpoint', {'state': 'working', 'note': 'Resume for the followup'})
+    second = call(runtime, 1, 'work.activity', {'task': 'parser-followup', 'paths': ['src/parser.py'],
+        'state': 'completed', 'note': 'Preserve escapes too'})['activity']
+    call(runtime, 1, 'identity.checkpoint', {'state': 'working', 'note': 'Start the next task'})
+    call(runtime, 1, 'work.activity', {'task': 'new-task', 'paths': ['other'], 'note': 'Unrelated work'})
+    found = call(runtime, 2, 'work.evidence', {'paths': ['src/parser.py'], 'limit': 1})
+    assert not found['activities']
+    assert [row['id'] for row in found['outcomes']] == [second['id']]
+    older = call(runtime, 2, 'work.evidence', {'paths': ['src/parser.py'], 'limit': 1,
+        'outcomes_before': found['outcomes_before']})
+    assert [row['id'] for row in older['outcomes']] == [first['id']]
+    assert older['outcomes_before'] is None
+    detail = call(runtime, 2, 'work.evidence_detail', {'kind': 'activity', 'id': first['id']})
+    assert detail['evidence'] == {'test': 'parser-regression'}
+    assert not call(runtime, 2, 'work.evidence', {'paths': ['src/parse']})['outcomes']
+
+
+def test_archived_and_old_assignment_scopes_are_history_not_current(runtime):
+    row = call(runtime, 1, 'work.activity', {'paths': ['src/parser.py'], 'note': 'Parser work'})['activity']
+    service, _ = runtime
+    with service.store.write() as tx:
+        tx.connection.execute('UPDATE actors SET archived=1 WHERE id=?', (context(runtime, 1).actor_id,))
+    assert not call(runtime, 2, 'work.activities', {'paths': ['src']})['activities']
+    assert call(runtime, 2, 'work.activities', {'paths': ['src'], 'current': False})['activities'][0]['id'] == row['id']
+    with service.store.write() as tx:
+        tx.connection.execute('UPDATE actors SET archived=0 WHERE id=?', (row['actor_id'],))
+        identity.assign_task(tx, context(runtime, 1), 'different assignment')
+    assert not call(runtime, 2, 'work.activities', {'paths': ['src']})['activities']
+
+
+def test_scope_context_is_advisory_bounded_and_only_on_new_scope(runtime):
+    peer = call(runtime, 1, 'work.activity', {'paths': ['src'], 'note': 'Own the schema'})['activity']
+    start = call(runtime, 0, 'work.activity', {'paths': ['src/parser.py'], 'note': 'Repair quoting'})
+    assert [row['id'] for row in start['scope_context']['items']] == [peer['id']]
+    assert not start['scope_context']['more']
+    assert 'scope_context' not in call(runtime, 0, 'work.activity', {'paths': ['src/parser.py'], 'note': 'Added regression'})
+    assert 'scope_context' not in call(runtime, 0, 'work.activity', {'state': 'completed'})
+    with runtime[0].store.read() as tx:
+        assert tx.connection.execute('SELECT COUNT(*) FROM messages').fetchone()[0] == 0
+
+
+def test_repeated_intent_keeps_timestamp_and_event_count(runtime):
+    args = {'paths': ['src/parser.py'], 'purpose': 'Keep quoting', 'invariants': ['Escapes survive']}
+    first = call(runtime, 1, 'work.intent', args)
+    with runtime[0].store.read() as tx:
+        before = tx.connection.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+        updated = tx.connection.execute('SELECT updated_us FROM intents WHERE id=?', (first['ids'][0],)).fetchone()[0]
+    second = call(runtime, 1, 'work.intent', args)
+    assert second['ids'] == first['ids'] and not second['recorded']
+    with runtime[0].store.read() as tx:
+        assert tx.connection.execute('SELECT COUNT(*) FROM events').fetchone()[0] == before
+        assert tx.connection.execute('SELECT updated_us FROM intents WHERE id=?', (first['ids'][0],)).fetchone()[0] == updated
+    assert call(runtime, 1, 'work.intent', {**args, 'state': 'completed'})['recorded']
+
+
+def test_ambiguous_hook_repetition_does_not_invent_execution_proof(runtime):
+    service, _ = runtime
+    owner = context(runtime, 1)
+    with service.store.write() as tx:
+        before = identity._actor(tx, owner.actor_id)
+        for _ in range(3):
+            result = identity.apply_lifecycle_event(tx, owner, state='completed', execution_generation=None, event='stop')
+            assert result == {'applied': False, 'reason': 'ambiguous_generation'}
+        assert tx.connection.execute("SELECT COUNT(*) FROM events WHERE actor_id=? AND kind='ambiguous_event'", (owner.actor_id,)).fetchone()[0] == 1
+        assert identity._actor(tx, owner.actor_id) == before
+        identity.apply_lifecycle_event(tx, owner, state='completed', execution_generation=None, event='child_stop')
+        assert tx.connection.execute("SELECT COUNT(*) FROM events WHERE actor_id=? AND kind='ambiguous_event'", (owner.actor_id,)).fetchone()[0] == 2
+
+
+@pytest.mark.parametrize('cursor', [0, True, 'bad', -1])
+def test_outcome_cursor_validation(runtime, cursor):
+    assert call(runtime, 2, 'work.evidence', {'paths': ['src'], 'outcomes_before': cursor}, ok=False)['code'] == 'INVALID_ARGUMENT'
+
+
+def test_activity_previews_and_detail_pages_preserve_exact_content(runtime):
+    paths = [f'src/{number:03}/' + 'p' * 400 for number in range(90)]
+    note = '🧩' * 450
+    evidence = {'receipt': 'e' * 4000}
+    row = call(runtime, 1, 'work.activity', {'paths': paths, 'note': note, 'evidence': evidence})['activity']
+    assert row['note_excerpt'] and row['note_bytes'] == len(note.encode())
+    assert row['evidence_omitted'] and 'evidence' not in row
+    assert row['path_count'] == len(paths) and row['paths_more']
+    recovered, after = [], None
+    with runtime[0].store.read() as tx:
+        before = tx.connection.execute('SELECT COUNT(*) FROM events').fetchone()[0]
+    while True:
+        args = {'kind': 'activity', 'id': row['id'], 'limit': 100}
+        if after:
+            args['paths_after'] = after
+        detail = call(runtime, 2, 'work.evidence_detail', args)
+        assert detail['note'] == note and detail['evidence'] == evidence
+        recovered.extend(detail['paths'])
+        after = detail['paths_after']
+        if not after:
+            break
+    assert recovered == paths
+    with runtime[0].store.read() as tx:
+        assert tx.connection.execute('SELECT COUNT(*) FROM events').fetchone()[0] == before
+
+
+def test_activity_byte_budget_has_a_lossless_continuation(runtime):
+    service, _ = runtime
+    expected = []
+    for number in range(16):
+        owner = identity.bind_native(service.store, {'harness': 'claude', 'native_session_id': uid(), 'task': 'scope-budget'})['context']
+        response = service.execute(owner, Call('work.activity', {
+            'paths': [f'src/{index}/' + 'p' * 600 for index in range(8)], 'note': '🧩' * 450,
+        }, uid()))
+        assert response['ok'], response
+        expected.append(response['data']['activity']['id'])
+    seen, after, pages = [], 0, 0
+    while True:
+        result = call(runtime, 2, 'work.activities', {'paths': ['src'], 'limit': 100, 'after': after})
+        assert len(json.dumps(result, ensure_ascii=False).encode()) < 42000
+        seen.extend(row['id'] for row in result['activities'])
+        pages += 1
+        after = result['after']
+        if after is None:
+            break
+    assert seen == expected and pages > 1
 
 
 def test_current_discovery_keeps_shared_reports_and_canonical_latest(runtime):
