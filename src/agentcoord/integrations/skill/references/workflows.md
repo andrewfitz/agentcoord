@@ -9,7 +9,9 @@ still owns placement, testing, commit expectations and versioning.
 
 Publish one `activity` for meaningful starting scope and update it only when the
 scope or outcome materially changes. Before editing overlapping work, read the
-current Git diff and relevant `activities`/`evidence`. Scope history is a discovery
+current Git diff and relevant `activities --current --paths ...`/`evidence`. Use
+historical activity only when an earlier intentional change needs explanation.
+Scope history is a discovery
 lead, not a lock or proof of live ownership. Preserve intentional repairs,
 including changes not related to your task.
 
@@ -27,6 +29,38 @@ only with current scoped authority. A response from an old task generation is
 a proposal: inspect the exact proposal with `request-get` and reconcile it
 explicitly under current authority before treating it as a decision.
 
+## Useful messages
+
+Send when the recipient needs to change an action or answer a real decision.
+Independent work needs an activity record, not a round of messages. Use ordinary
+language; no code dictionary, rigid form or routine acknowledgment is required.
+A few sentences usually suffice, but retain essential conditions and evidence.
+
+- Lead with the requested action, settled decision or usable result.
+- Name the exact shared path/interface, intentional behavior to preserve and
+  ownership boundary when overlap matters. Explain a deliberate fix so a peer
+  can avoid reverting it.
+- Include a retained test/request/commit reference and its actual outcome when
+  it supports the action. Link long logs and reports instead of pasting them.
+- For a question, state the choice and consequence once. Use a tracked request
+  only when that answer really gates a dependent slice; continue other work.
+
+Examples:
+
+> Preserve the escaping fix in `src/parser.py`; quoted commas must stay in one
+> token. Regression passed in request `<actual-id>`. I own tokenization; your
+> rendering changes can continue independently.
+
+> Is the new endpoint's `region` required? I need that decision for validation.
+> Current schema allows omission; making it required changes the app payload.
+> I am continuing the unrelated retry fix while this request is open.
+
+Reuse the thread and existing decision. Bundle related nonurgent deltas for the
+same recipient. Send an urgent blocker or contract change immediately to affected
+owners, not every agent. Do not send read/command announcements, repeated scope
+updates, courtesy acknowledgments, or ask for evidence already available. A sent
+message is delivery, not a promise that the recipient has acted.
+
 ## Natural boundaries and complete content
 
 Handle returned action digests at phase, resume or commit boundaries. Use `sync`
@@ -34,6 +68,14 @@ when reaching a natural boundary without a digest. Read selected full messages,
 requests and readiness receipts when previews omit required content. Follow
 returned offsets/cursors to completion for the selected record; do not load all
 workspace history for routine coding.
+
+Message previews include sender, subject, thread, body size and an explicit
+`summary_excerpt` when incomplete. Treat excerpts as discovery, not a complete
+instruction. For several selected IDs use `message-batch --ids ...` instead of
+one call per message. Continue with the same IDs and returned `next_index`; read
+remaining bodies through `message ID --offset NEXT_OFFSET`. Metadata and attachment
+indexes retain their own continuations. Batch reads never present, consume or
+acknowledge messages; use `consume-batch` only after handling them.
 
 For attachments, page the index with `attachments`, then join all `reference`
 chunks returned by `attachment` before parsing JSON. Evidence references remain

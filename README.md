@@ -134,6 +134,13 @@ The read-only monitor shows actors, actions, work and complete paginated history
 without consuming messages. Default agent digests have at most three previews;
 full records remain available on demand.
 
+Messages use plain language and lead with the recipient's next action, affected
+scope and supporting evidence. Batch related nonurgent updates instead of sending
+status/acknowledgment conversations. `message-batch --ids ...` reads selected
+messages in one bounded call with explicit continuations and no handling effects.
+Previews identify senders and incomplete text; send receipts do not echo bodies.
+Compact JSON saves formatting bytes without a code dictionary or lost context.
+
 A normal service restart preserves work. Explicit maintenance drain stops new
 mutations and external starts, permits outcome inspection and waits for owned
 work. Uncertain Git publications or process launches require reconciliation

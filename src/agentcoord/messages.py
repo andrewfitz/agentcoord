@@ -205,6 +205,38 @@ def text_chunk(value, *, offset=0, limit=8192):
             "offset": offset, "next_offset": end if end < len(raw) else None}
 
 
+def read_batch(tx, context, ids, *, index=0, body_limit=8192, byte_budget=32768):
+    """Read selected messages once, without presentation or handling effects."""
+    if not isinstance(ids, list) or not 1 <= len(ids) <= 16:
+        _error("Batch requires 1..16 distinct message IDs")
+    for message_id in ids:
+        identifier(message_id, "message")
+    if len(set(ids)) != len(ids):
+        _error("Batch requires 1..16 distinct message IDs")
+    index = integer(index, "index", 0, len(ids))
+    body_limit = integer(body_limit, "body_limit", 4, 32768)
+    byte_budget = integer(byte_budget, "byte_budget", 16384, 65536)
+    result = {"items": [], "next_index": None}
+    for position in range(index, len(ids)):
+        limit = body_limit
+        while True:
+            try:
+                item = {"ok": True, **read_message(tx, context, ids[position], limit=limit)}
+            except CoordinationError as error:
+                item = {"ok": False, "id": ids[position], "error": {"code": error.code, "message": error.message}}
+            candidate = {"items": [*result["items"], item], "next_index": position + 1 if position + 1 < len(ids) else None}
+            if len(canonical(candidate).encode()) <= byte_budget:
+                result = candidate
+                break
+            if result["items"]:
+                result["next_index"] = position
+                return result
+            if limit == 4:
+                _error("Message metadata exceeds batch budget; use message or a larger byte_budget")
+            limit = max(4, limit // 2)
+    return result
+
+
 def pending_filters(filters=None):
     filters = dict(filters or {})
     validate_fields(filters, {"actor_id", "task", "path"})
@@ -234,7 +266,7 @@ def notice_ids(tx, context, table, column, record_id):
 
 def _pending_query(tx, context, *, new_only=False, filters=None, exclude_domain_notifications=False):
     filters = pending_filters(filters)
-    sql = """SELECT m.id,m.kind,m.subject,m.sequence,m.created_us,
+    sql = """SELECT m.id,m.kind,m.subject,m.sender_id,m.thread,m.body_bytes,m.sequence,m.created_us,
         MIN(r.actor_id) AS actor_id,COUNT(*) AS recipient_count,
         CASE WHEN SUM(r.presented_us IS NULL)>0 THEN NULL ELSE MIN(r.presented_us) END AS presented_us,
         substr(CAST(m.body_utf8 AS TEXT),1,360) AS summary
@@ -279,6 +311,7 @@ def select_unhandled(tx, context, *, after=None, limit=20, exclude_ids=(), new_o
     sql += " GROUP BY m.id ORDER BY m.sequence LIMIT ?"
     rows = tx.connection.execute(sql, (*args, limit)).fetchall()
     return [{**dict(row), "kind": "message", "message_kind": row["kind"], "version": 1,
+             "summary_excerpt": len(row["summary"].encode("utf-8")) < row["body_bytes"],
              "message_ids": [row["id"]], "next_action": "message.get"} for row in rows]
 
 
@@ -325,6 +358,12 @@ def _send(service, context, args, tx):
 def _get(service, context, args, tx):
     fields(args, {"id", "offset", "limit"}, {"id"})
     return read_message(tx, context, args["id"], offset=args.get("offset", 0), limit=args.get("limit", 32768))
+
+
+def _get_batch(service, context, args, tx):
+    fields(args, {"ids", "index", "body_limit", "byte_budget"}, {"ids"})
+    return read_batch(tx, context, args["ids"], index=args.get("index", 0),
+                      body_limit=args.get("body_limit", 8192), byte_budget=args.get("byte_budget", 32768))
 
 
 def _attachments(service, context, args, tx):
@@ -433,6 +472,7 @@ def operations():
     return (
         Operation("message.send", _send, True, True, True),
         Operation("message.get", _get, False, False, False),
+        Operation("message.get_batch", _get_batch, False, False, False),
         Operation("message.attachments", _attachments, False, False, False),
         Operation("message.attachment", _attachment, False, False, False),
         Operation("message.consume", _consume, True, True, True),

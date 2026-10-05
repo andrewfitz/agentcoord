@@ -48,6 +48,11 @@ def _position(cursor, query):
 def _preview(action):
     fields = {
         "kind",
+        "message_kind",
+        "subject",
+        "thread",
+        "body_bytes",
+        "summary_excerpt",
         "id",
         "version",
         "sequence",

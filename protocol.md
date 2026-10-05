@@ -27,6 +27,19 @@ retained JSON reference in byte chunks. Follow `next_offset` and join the return
 `reference` strings before parsing JSON. These reads use the message's sender,
 recipient or operator visibility and never handle its content.
 
+Use plain-language messages that change the recipient's next action: the result
+or question first, then relevant paths, ownership and enough evidence to act.
+Do not announce ordinary reads/commands, repeat available status, send courtesy
+acknowledgment chains or broadcast unrelated updates. Bundle related nonurgent
+deltas for one recipient; deliver an urgent blocker promptly. Preserve intentional
+fixes by naming their purpose and conditions. Send receipts never echo body text.
+
+Selected messages may be read together with `message-batch`. The bounded response
+has explicit `next_index` over the same ID list and each body's `next_offset`;
+neither reading nor pagination handles messages. Previews expose sender, subject,
+thread and body bytes, and mark incomplete summaries. CLI/MCP JSON omits optional
+formatting whitespace while preserving all content, fields and recovery receipts.
+
 Before creating a blocking request, find relevant open decisions and follow one
 that covers the actual dependency. Followers acquire no answer or edit authority.
 Deadlines make a decision overdue; silence never resolves it or transfers work.

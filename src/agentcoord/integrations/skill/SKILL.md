@@ -12,6 +12,12 @@ local instructions and the user's authorized scope for those choices.
 
 ## Meaningful work
 
+Use plain language and make the recipient's next action clear. Send only a real
+overlap, decision, changed contract, blocker or usable handoff. Put the action or
+result first, then the affected path and evidence needed to act. Omit narration,
+repeated context, acknowledgment chains and requests for status already recorded.
+Batch related nonurgent updates for the same recipient; do not delay a blocker.
+
 - Publish `activity` once when starting or materially changing coding scope,
   a long test/audit, a blocker, a handoff or completion. Record useful intent,
   paths and evidence; paths help discovery and do not reserve edits.

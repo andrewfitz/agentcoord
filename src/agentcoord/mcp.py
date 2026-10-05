@@ -51,7 +51,7 @@ def tool_result(envelope):
     result = types.CallToolResult(
         content=[
             types.TextContent(
-                type="text", text=json.dumps(envelope, ensure_ascii=False, allow_nan=False)
+                type="text", text=json.dumps(envelope, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
             )
         ],
         is_error=not envelope.get("ok", False),
@@ -61,7 +61,7 @@ def tool_result(envelope):
             "INVALID_ARGUMENT", "MCP response exceeds 256 KiB; request a smaller chunk or page"
         )
         return types.CallToolResult(
-            content=[types.TextContent(type="text", text=json.dumps(bounded))], is_error=True
+            content=[types.TextContent(type="text", text=json.dumps(bounded, separators=(",", ":")))], is_error=True
         )
     return result
 

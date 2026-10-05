@@ -48,6 +48,7 @@ def test_real_sdk_catalog_calls_and_rejected_identity_override():
                     "request",
                     "request_follow",
                     "consume",
+                    "message_batch",
                     "dependency_accept",
                     "commit_execute",
                     "schedule",

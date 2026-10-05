@@ -236,7 +236,7 @@ CATALOG = (
         "message.send",
         "send",
         "send",
-        "Send a directed message using the bound sender and a stable retry key.",
+        "Send an actionable result or question, relevant scope and evidence to affected peers; use a stable retry key.",
         {
             "recipients": {
                 "type": "array",
@@ -275,6 +275,21 @@ CATALOG = (
         ("id",),
         False,
         ("id",),
+    ),
+    _spec(
+        "message.get_batch",
+        "message-batch",
+        "message_batch",
+        "Read selected messages in one bounded call; follow next_index and each message's next_offset.",
+        {
+            "ids": {"type": "array", "items": ID, "minItems": 1, "maxItems": 16, "uniqueItems": True},
+            "index": {"type": "integer", "minimum": 0, "maximum": 16},
+            "body_limit": {"type": "integer", "minimum": 4, "maximum": 32768},
+            "byte_budget": {"type": "integer", "minimum": 16384, "maximum": 65536},
+        },
+        ("ids",),
+        False,
+        (),
     ),
     _spec(
         "message.attachments",
@@ -1576,7 +1591,7 @@ def main(argv=None, *, client_factory=None):
                 "data": result,
                 "action_digest": None,
             }
-        sys.stdout.write(json.dumps(result, ensure_ascii=False, allow_nan=False) + "\n")
+        sys.stdout.write(json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(",", ":")) + "\n")
         return 0 if result.get("ok") else 1
     except (CoordinationError, OSError, ValueError, RuntimeError) as exc:
         result = (
@@ -1593,5 +1608,5 @@ def main(argv=None, *, client_factory=None):
         if getattr(args, "maintenance", None) == "hook":
             _write_hook_error(result["error"])
         else:
-            sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+            sys.stdout.write(json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n")
         return 1
