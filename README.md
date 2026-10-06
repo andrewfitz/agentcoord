@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.6/agentcoord-0.1.6-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.7/agentcoord-0.1.7-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.6/agentcoord-0.1.6-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.7/agentcoord-0.1.7-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -93,7 +93,7 @@ local tap, not a formula in Homebrew core:
 ```sh
 brew tap-new local/agentcoord
 curl --fail --location \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.6/agentcoord.rb \
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.7/agentcoord.rb \
   --output "$(brew --repository local/agentcoord)/Formula/agentcoord.rb"
 brew install local/agentcoord/agentcoord
 agentcoord --help
