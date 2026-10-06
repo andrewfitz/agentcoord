@@ -19,6 +19,11 @@ repository's language, frameworks, tests and version policy.
 Reads and ordinary shell commands need no announcements, wrappers or locks.
 Folder scopes describe work; they do not reserve files. No chat injection,
 per-command coordination hooks, agent heartbeat calls or inbox polling loops.
+Small self-contained edits to prose, Markdown, README text, translations,
+fixtures, snapshots and ordinary configuration are also silent: no activity,
+intent, message, status lookup or completion announcement. Coordinate only for
+real exact-file overlap, shared contracts or instructions, long-running work,
+blockers, handoffs, decisions or deliberate fixes that could be reverted.
 
 The [development specification](distributed-spec.md) proposes two delivery stages:
 single-repository improvements, followed by multiple repositories and network

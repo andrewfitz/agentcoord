@@ -18,6 +18,15 @@ result first, then the affected path and evidence needed to act. Omit narration,
 repeated context, acknowledgment chains and requests for status already recorded.
 Batch related nonurgent updates for the same recipient; do not delay a blocker.
 
+Default to no coordination. A small self-contained edit to prose, Markdown,
+README text, translations, fixtures, snapshots or ordinary configuration needs
+no `activity`, `intent`, message, status lookup or inbox check, including at
+start and completion. A tracked file is not automatically shared work. Use
+coordination only for exact-file overlap, a shared API/schema/generated
+contract/instruction change, a long test or audit, a blocker, a handoff, a real
+decision, or a non-obvious fix that another agent could reasonably undo. If none
+applies, edit and verify silently.
+
 - Publish `activity` once when starting or materially changing coding scope,
   a long test/audit, a blocker, a handoff or completion. Record useful intent,
   paths and evidence; paths help discovery and do not reserve edits.

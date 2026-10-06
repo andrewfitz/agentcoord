@@ -8,6 +8,10 @@ edits and staging; folder scopes and historical presence grant no edit authority
 Handle actions at natural work boundaries. Reads and ordinary commands need no
 declaration, inbox polling, heartbeat or coordination wrapper. Use authenticated
 native identity; never select an actor from a label or inject terminal input.
+Small self-contained text, documentation, fixture, snapshot and ordinary
+configuration edits need no activity, intent, message, status check or
+completion announcement. Coordinate only for real overlap, shared contracts or
+instructions, long work, blockers, handoffs, decisions or deliberate fixes.
 
 Coordination availability is not a prerequisite for independent coding, checks
 or authorized owned-file commits. If it is unavailable, continue useful work;

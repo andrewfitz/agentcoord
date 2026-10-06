@@ -57,6 +57,12 @@ retrieves exact notes/evidence and paginated paths. Follow `paths_after` with
 records per section. New activity scopes include advisory `scope_context` with
 no automatic peer messages or reservations.
 
+Do not use these commands for a small self-contained prose, Markdown, README,
+translation, fixture, snapshot or ordinary configuration edit. Routine text work
+is intentionally silent. Use them only for exact overlap, shared contracts or
+instructions, long-running work, blockers, handoffs, decisions or deliberate
+fix preservation.
+
 ## Dependency decisions
 
 | Command | When to use it |

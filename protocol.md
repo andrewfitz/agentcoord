@@ -12,6 +12,19 @@ Publish activity once when starting or materially changing meaningful scope,
 waiting on a real dependency, handing off or completing work. Record intent,
 invariants and useful evidence. Folder scopes help discovery and grant no edit
 reservation. Inspect relevant activity and current diffs when overlap matters.
+
+Coordination is silent by default. Do not publish activity, intent, messages,
+status checks or inbox checks for a small self-contained edit to prose,
+documentation, a README, a translation, a fixture, a snapshot or ordinary
+configuration. This includes the start, individual edits and completion of that
+work. Do not coordinate merely because the file is tracked or another actor's
+folder is nearby. Coordinate only when the exact file or shared contract is
+actively being changed by another agent, the change alters shared instructions,
+an API, schema, generated contract or acceptance rule, the work is a long-running
+test/audit or broad migration, there is a blocker, handoff or decision, or a
+non-obvious deliberate fix needs preservation. When uncertain, continue silently
+and inspect the diff before creating a record; an ordinary text edit is not a
+coordination event.
 Preserve intentional peer edits and continue independent work while waiting.
 
 At a natural work boundary, `sync` presents a bounded pending action view. Read

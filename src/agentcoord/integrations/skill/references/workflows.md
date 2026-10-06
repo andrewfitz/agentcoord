@@ -7,6 +7,24 @@ still owns placement, testing, commit expectations and versioning.
 
 ## Scope, overlap and decisions
 
+### Silent-by-default rule
+
+Do not call Agentcoord for a small, self-contained text or documentation edit.
+That includes README and Markdown wording, translations, fixtures, snapshots,
+ordinary configuration, and their normal verification. Do not announce the
+start, each write, each read, or completion. Do not run `identity`, `status`,
+`activities`, `evidence` or `sync` as ceremony. A path being tracked, a broad
+folder scope, or another agent being online is not a reason to coordinate.
+
+Use one activity only when work is long-running or materially shared, or when it
+records a real blocker, handoff or completed outcome. Use `intent` only for a
+settled non-obvious fix that could be reverted. Use a message or request only
+when a named recipient must change an action or answer a dependency. A document
+change becomes coordination-worthy when it changes shared agent instructions,
+an API/schema/generated contract or an acceptance rule relied on by other work;
+ordinary prose cleanup remains silent. When in doubt, stay silent and keep
+working unless the exact file is actively overlapping.
+
 Publish one `activity` for meaningful starting scope and update it only when the
 scope or outcome materially changes. Include a task name in the first activity;
 a fresh native session has no assigned task yet. No separate identity/status call
