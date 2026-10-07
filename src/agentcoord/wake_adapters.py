@@ -1,20 +1,95 @@
 """Harness-specific transports. No terminal keys, offline loads or extra daemons."""
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import selectors
-import shlex
 import socket
 import stat
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 from .core import CoordinationError, canonical_json
+from .identity import process_status
 from .wake import channel_path
 
 MAX_NATIVE_FRAME = 2 * 1024 * 1024
+
+
+def native_argv(process):
+    """Read kernel argument boundaries; prompt text cannot masquerade as flags."""
+    if process_status(process) != 'alive':
+        raise CoordinationError('NOT_AVAILABLE', 'Native process is not verified live')
+    try:
+        if sys.platform == 'darwin':
+            libc = ctypes.CDLL('/usr/lib/libSystem.B.dylib', use_errno=True)
+            mib = (ctypes.c_int * 3)(1, 49, process['pid'])  # CTL_KERN/KERN_PROCARGS2
+            libc.sysctl.argtypes = [ctypes.POINTER(ctypes.c_int), ctypes.c_uint,
+                                   ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t),
+                                   ctypes.c_void_p, ctypes.c_size_t]
+            libc.sysctl.restype = ctypes.c_int
+            # Darwin rejects oversized PROCARGS2 buffers, even when they are
+            # larger than the data. Use KERN_ARGMAX rather than a frame budget.
+            argmax = ctypes.c_int()
+            argmax_size = ctypes.c_size_t(ctypes.sizeof(argmax))
+            argmax_mib = (ctypes.c_int * 2)(1, 8)
+            if (libc.sysctl(argmax_mib, 2, ctypes.byref(argmax), ctypes.byref(argmax_size), None, 0)
+                    or not 4 < argmax.value <= MAX_NATIVE_FRAME):
+                raise OSError('Native argument limit is unavailable')
+            buffer = ctypes.create_string_buffer(argmax.value)
+            size = ctypes.c_size_t(len(buffer))
+            if libc.sysctl(mib, 3, buffer, ctypes.byref(size), None, 0):
+                raise OSError('Native argument lookup failed')
+            raw = buffer.raw[:size.value]
+            argc = int.from_bytes(raw[:4], sys.byteorder)
+            if not 1 <= argc <= 4096:
+                raise ValueError('Native argument count is invalid')
+            start = raw.index(b'\x00', 4) + 1  # kernel executable path
+            while start < len(raw) and raw[start] == 0:
+                start += 1
+            args = raw[start:].split(b'\x00', argc)[:argc]
+            if len(args) != argc:
+                raise ValueError('Native arguments are truncated')
+        elif sys.platform.startswith('linux'):
+            with Path(f"/proc/{process['pid']}/cmdline").open('rb') as stream:
+                raw = stream.read(MAX_NATIVE_FRAME + 1)
+            if not raw or len(raw) > MAX_NATIVE_FRAME or not raw.endswith(b'\x00'):
+                raise ValueError('Native arguments are invalid')
+            args = raw[:-1].split(b'\x00')
+        else:
+            raise OSError('Native arguments are unsupported')
+        if process_status(process) != 'alive':
+            raise OSError('Native process changed during lookup')
+        return [os.fsdecode(a) for a in args]
+    except (OSError, ValueError, KeyError) as error:
+        raise CoordinationError('NOT_AVAILABLE', 'Exact native launch arguments are unavailable') from error
+
+
+def claude_channel_requested(context):
+    if context.get('harness') != 'claude' or not context.get('process_identity'):
+        return False
+    try:
+        argv = native_argv(context['process_identity'])
+    except CoordinationError:
+        return False
+    flags = {'--channels', '--dangerously-load-development-channels'}
+    for index, argument in enumerate(argv):
+        if argument == '--':
+            break
+        name, separator, value = argument.partition('=')
+        if name not in flags:
+            continue
+        values = [value] if separator else []
+        for following in argv[index+1:] if not separator else ():
+            if following.startswith('-'):
+                break
+            values.append(following)
+        if any('server:agentcoord' in item.split(',') for item in values):
+            return True
+    return False
 
 
 def signal_text(operation):
@@ -222,9 +297,7 @@ class GrokRPC:
 def grok(service, operation, actor, channels, effect):
     path = private_socket(service.config.wake_sockets.get('grok') or Path.home()/'.grok/leader.sock')
     process = json.loads(actor['process_identity_json'])
-    argv = subprocess.run(['ps', '-p', str(process['pid']), '-o', 'args='],
-                          capture_output=True, text=True, timeout=3, check=True).stdout
-    words = shlex.split(argv)
+    words = native_argv(process)
     # Shared ACP owners were verified. Current standalone TUIs have no safe
     # attach endpoint; their history must not be loaded in another process.
     if not ('agent' in words and 'stdio' in words and '--leader' in words):

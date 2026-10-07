@@ -379,3 +379,22 @@ def test_assembled_daemon_delivers_to_real_mcp_receiver(runtime):
             server.shutdown()
             worker.join(5)
             assert not worker.is_alive()
+
+
+@pytest.mark.parametrize('argv,expected', [
+    (['claude'], False),
+    (['claude', '--dangerously-load-development-channels', 'server:agentcoord'], True),
+    (['claude', '--channels=server:agentcoord'], True),
+    (['claude', 'Explain --channels server:agentcoord'], False),
+    (['claude', '--', '--channels', 'server:agentcoord'], False),
+    (['claude', '--channels', 'server:other'], False),
+])
+def test_native_claude_channel_activation_is_explicit(monkeypatch, argv, expected):
+    monkeypatch.setattr(wake_adapters, 'native_argv', lambda _: argv)
+    assert wake_adapters.claude_channel_requested({'harness': 'claude', 'process_identity': {'pid': 1}}) is expected
+    assert not wake_adapters.claude_channel_requested({'harness': 'codex', 'process_identity': {'pid': 1}})
+
+
+def test_native_argument_boundaries_are_read_from_kernel():
+    argv = wake_adapters.native_argv(identity.process_identity(os.getpid()))
+    assert argv and any('pytest' in item for item in argv)
