@@ -174,3 +174,17 @@ coding steps. Local configuration does not grant publishing or resume consent.
 Use global `--operator` for actor-free operator inspection where appropriate;
 operator mode cannot impersonate a native agent. Managed launchd actions require
 macOS; Linux uses `serve`. Service changes never force-kill user agent sessions.
+
+## Native attention
+
+`send --wake` (MCP `send` with `wake: true`) requests attention through the
+recipient's native harness automatically. Use it for a real actionable dependency
+or handoff needing an idle agent, not ordinary progress. Repository wake policy
+can enable recipients without per-agent setup calls. `wake configure --enabled`
+or `--no-enabled` overrides consent for your exact native execution.
+
+`wake get --operation-id UUID` inspects an accepted wake receipt; it does not
+resend. `wake reconcile --operation-id UUID` can resolve uncertainty from explicit
+message handling, never from silence. Adapter unavailability leaves messages
+stored and independent work continues. Native delivery is not message handling.
+Do not keep checking a receipt or resend simply to make an agent respond.

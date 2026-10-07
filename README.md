@@ -484,3 +484,82 @@ Upload artifacts only after verification; retain each released archive unchanged
 Local build receipts can contain machine paths and should stay local.
 
 Questions and defects: [GitHub Issues](https://github.com/andrewfitz/agentcoord/issues).
+
+## Wake an idle agent
+
+Use the same CLI or MCP send operation for every supported harness:
+
+```sh
+agentcoord send --recipients RECIPIENT_UUID --kind handoff \
+  --subject 'Parser fix ready' --body 'Preserve escaped delimiters; focused tests pass.' --wake
+```
+
+MCP: `send` with `wake: true`. Agentcoord chooses the adapter from the
+recipient's authenticated native identity. Senders never choose a harness,
+process, socket or session to execute. Plain sends remain silent and wait for a
+natural work boundary. Use wake for an actionable dependency or handoff that
+needs an idle agent's attention, not routine progress or courtesy replies.
+
+Enable wake once per repository in `.agentcoord.toml`, then apply the normal
+service upgrade/restart procedure at a safe boundary:
+
+```toml
+[native]
+wake_enabled = true
+```
+
+This authorizes native signals to registered live root sessions. Alternatively,
+a native owner can opt its current execution in with
+`agentcoord wake configure --enabled`, or out with `--no-enabled`.
+Per-session consent is bound to that exact execution. Offline scheduled resume
+has separate consent; `--wake` never starts another harness process for an
+existing session, answers tool approvals, or restarts paused/completed agents.
+
+| Recipient | Native route and activation |
+| --- | --- |
+| Codex | Queue through the existing shared app-server control socket. The exact thread must already be loaded in that daemon and belong to this repository. No standalone/offline thread resume. |
+| Claude | The installed Claude MCP adapter advertises `claude/channel`. Launch interactive Claude with `--dangerously-load-development-channels server:agentcoord` and complete its native Channel/MCP trust flow. Research-preview availability and organization policy apply; this flag does not grant tool permissions. An already-running session needs a natural relaunch with the flag. |
+| Grok | Supported for a live native `grok agent --leader ... stdio` ACP owner attached to an existing shared leader. Standalone TUIs currently have no verified attachment route and retain ordinary tool-based messaging. Agentcoord never clones their histories. Busy ACP owners keep messages pending rather than being interrupted. |
+| Cursor | Ordinary tool-based messaging; no verified native wake transport. |
+
+For a nondefault native socket, configure the operator-owned route (never a
+message field):
+
+```toml
+[native.wake_sockets]
+codex = "/absolute/private/app-server-control.sock"
+grok = "/absolute/private/leader.sock"
+```
+
+Codex's default honors the service's `CODEX_HOME`, then `~/.codex`.
+Grok's default is `~/.grok/leader.sock`; its owner must use the same leader.
+Native endpoints must belong to the local user and be private through the socket
+or its parent directory. Only Codex's owned private socket alias may be resolved.
+
+The send receipt confirms database acceptance and lists any queued wake operation
+IDs or immediate disabled/unsupported results. Inspect a particular result with
+`agentcoord wake get --operation-id UUID`. Delivery states include
+`native_queued`, `turn_started`, `notification_sent`, `turn_completed`,
+`deferred_busy` and `unavailable`. A native signal or completed turn does **not**
+prove message handling; `handled_messages` counts explicit recipient consumption.
+
+Messages and wake intents commit atomically in the existing database. Unsent
+bursts coalesce for the same recipient task/execution over a short debounce.
+Dispatch checks consent, generations, live process evidence and repository again.
+Signals contain a fixed instruction to sync plus a receipt ID; peer message bodies
+remain data retrieved through tools. No terminal input, extra supervisor, model
+polling or per-command hooks are involved. Existing operation history and the
+monitor expose wake receipts without another log or state ledger.
+
+Unavailable transport leaves the message stored and independent work proceeds.
+Interrupted external effects remain `uncertain` and are never automatically
+resent. `agentcoord wake reconcile --operation-id UUID` can settle an uncertain
+receipt from explicit handling evidence; missing evidence preserves uncertainty.
+Do not resend a message merely because a wake is unavailable or uncertain.
+
+Native acceptance tested during development: Codex queue-to-same-thread turn;
+Grok two ACP clients through an isolated shared leader. Claude notification
+framing, private endpoint authentication, binding renewal and delivery receipts
+are tested against the MCP SDK; actual model acceptance still requires the
+recipient's native Channel activation. No claim is made for waking existing
+standalone Grok TUIs or automatically activating a running Claude session.

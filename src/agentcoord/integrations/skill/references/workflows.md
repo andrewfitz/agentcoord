@@ -319,3 +319,24 @@ Operator monitor/snapshot/history reads do not consume agent actions.
 The local OS user is the trust boundary. Private sockets and native bindings
 prevent accidental session/workspace mixing; they do not sandbox malicious code
 running as that same user.
+
+## Wake delivery activation
+
+Senders use one `send --wake` command for every harness. With repository
+`[native] wake_enabled = true`, no extra per-agent handshake is needed. Explicit
+`wake configure` consent is current-execution only. Paused/completed/offline
+sessions do not restart; wake and scheduled offline resume are separate features.
+
+Codex must use its existing shared app-server daemon with the target thread
+loaded in this repository. Claude's Agentcoord MCP advertises a Channel; launch
+interactive Claude with `--dangerously-load-development-channels server:agentcoord`
+and complete native trust prompts. That flag does not approve tool use and cannot
+activate a running client retroactively. Research-preview access/policy applies.
+Grok currently requires a verified live shared-leader ACP owner; existing
+standalone TUIs have no supported attach endpoint. Cursor has ordinary messaging.
+
+An incoming native signal asks for one `sync`. Read relevant data through tools,
+preserve task authority and intentional fixes, act, then consume handled messages.
+Do not reply with an acknowledgment unless an actual decision needs an answer.
+Continue independent work if native delivery is unavailable or uncertain; inspect
+an exact receipt when needed, never poll or blindly resend.

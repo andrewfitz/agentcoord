@@ -58,6 +58,8 @@ class Config:
     frame_bytes: int = 262144
     action_bytes: int = 8192
     native_executables: dict[str, str] = field(default_factory=dict)
+    wake_sockets: dict[str, str] = field(default_factory=dict)
+    wake_enabled: bool = False
     jobs_log_max_bytes: int = 262144
 
 
@@ -252,10 +254,17 @@ def load_config(workspace: Workspace) -> Config:
             raise CoordinationError("INVALID_ARGUMENT", "Version increment must be major/minor/patch")
         values["version"] = VersionRule(normalized, match, replacement, increment, rule.get("validate"))
     native = data.get("native", {})
-    validate_fields(native, {"executables"})
+    validate_fields(native, {"executables", "wake_sockets", "wake_enabled"})
+    if type(native.get("wake_enabled", False)) is not bool:
+        raise CoordinationError("INVALID_ARGUMENT", "native.wake_enabled must be boolean")
+    values["wake_enabled"] = native.get("wake_enabled", False)
     executables = native.get("executables", {})
     validate_fields(executables, {"claude", "codex", "cursor", "grok"})
     values["native_executables"] = {key: bounded_text(value, f"{key} executable", 4096) for key, value in executables.items()}
+    wake_sockets = native.get("wake_sockets", {})
+    validate_fields(wake_sockets, {"codex", "grok"})
+    values["wake_sockets"] = {key: bounded_text(value, f"{key} wake socket", 4096)
+                             for key, value in wake_sockets.items()}
     config = Config(**values)
     if config.action_bytes > config.frame_bytes - 1024:
         raise CoordinationError("INVALID_ARGUMENT", "Action budget must fit the transport frame")

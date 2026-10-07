@@ -22,3 +22,9 @@ Use returned scope context before asking peers; folder overlap alone is advisory
 Evidence includes recent completed fixes after owners change tasks. Read selected
 details when previews are marked incomplete. For missing native binding, inspect
 once and retry only after a confirmed setup change; continue independent work.
+
+For an actionable dependency or handoff needing an idle agent, use `send --wake`
+(MCP `send` with `wake: true`); Agentcoord selects the native adapter. On a wake
+signal run one `sync` and handle relevant messages within existing authority.
+Do not poll, send courtesy replies or let unavailable delivery block independent
+work. Native activation requirements live in the shared skill workflow reference.

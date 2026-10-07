@@ -178,6 +178,7 @@ def _operation_reconcile(service, context, arguments, tx):
     handler = service.adapters.get("reconcile_handlers", {}).get(record["kind"])
     if handler is None:
         command = ("commit.reconcile" if record["kind"].startswith("commit.") else
+                   "wake.reconcile" if record["kind"] == "message.wake" else
                    "job.resolve" if record["kind"] == "job.execute" else
                    "operation.ack" if record["state"] == "failed" else "operation.reconcile")
         raise CoordinationError("RECONCILIATION_REQUIRED", "Use this operation's domain reconciliation command",
@@ -316,7 +317,8 @@ class Service:
                 raise CoordinationError("NOT_AUTHORIZED", "Operator connections cannot perform actor mutations")
             if context.identity_mode == "shared_group" and (
                 call.operation in {"identity.checkpoint", "identity.complete", "identity.delegate", "identity.event",
-                                   "commit.acquire", "commit.cancel", "commit.release", "commit.execute", "commit.reconcile"}
+                                   "commit.acquire", "commit.cancel", "commit.release", "commit.execute", "commit.reconcile",
+                                   "wake.configure"}
                 or (call.operation == "job.schedule" and call.arguments.get("kind") == "resume")):
                 raise CoordinationError("NOT_AUTHORIZED", "Use independently bound native-owner CLI for this operation")
             if operation.keyed:
@@ -376,7 +378,7 @@ class Service:
                             not context.operator)
             if not prior and isinstance(result, dict) and (
                     (result.get("operation_id") is not None and result.get("state") == "queued") or
-                    call.operation == "job.schedule"):
+                    call.operation == "job.schedule" or result.get("wake")):
                 callback = self.adapters.get("work_available")
                 if callback:
                     try:
@@ -472,7 +474,8 @@ class Service:
             raise CoordinationError("NOT_AUTHORIZED", "External execution claim changed")
         if continuing and row["effect_started_us"] is None:
             raise CoordinationError("NOT_AUTHORIZED", "External effect has not started")
-        self.require_generation(tx, row["actor_id"], row["task_generation"], row["execution_generation"])
+        if row["kind"] != "message.wake":
+            self.require_generation(tx, row["actor_id"], row["task_generation"], row["execution_generation"])
         metadata = {r[0]: json.loads(r[1]) for r in tx.connection.execute("SELECT key,value_json FROM meta WHERE key IN ('service_state','authority_generation')")}
         allowed_states = {"active", "draining"} if continuing else {"active"}
         if metadata.get("service_state") not in allowed_states or metadata.get("authority_generation") != row["authority_generation"]:
@@ -494,7 +497,8 @@ class Service:
             if metadata.get("authority_generation") != row["authority_generation"]:
                 return self.finish_operation(tx, operation_id, "failed", error=CoordinationError("AUTHORITY_FENCED", "Accepted execution belongs to an earlier authority").as_dict())
             try:
-                self.require_generation(tx, row["actor_id"], row["task_generation"], row["execution_generation"])
+                if row["kind"] != "message.wake":
+                    self.require_generation(tx, row["actor_id"], row["task_generation"], row["execution_generation"])
             except CoordinationError as error:
                 return self.finish_operation(tx, operation_id, "failed", error=error.as_dict())
             handler = self.adapters.get("slow_handlers", {}).get(row["kind"])

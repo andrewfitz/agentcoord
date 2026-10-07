@@ -60,7 +60,14 @@ def encode_frame(value):
 
 
 def read_frame(stream):
-    data = stream.readline(MAX_FRAME + 1)
+    try:
+        data = stream.readline(MAX_FRAME + 1)
+    except ValueError as error:
+        if getattr(stream, "closed", False):
+            # close() can interrupt the bind read before or during readline;
+            # both are transport loss, not an uncaught worker exception.
+            raise EOFError from error
+        raise
     if not data:
         raise EOFError
     if len(data) > MAX_FRAME or not data.endswith(b"\n"):
@@ -127,6 +134,7 @@ class Client:
         self.transport = transport
         self.timeout = timeout
         self._socket = None
+        self._binding_epoch = 0
         self._stream = None
         self._lock = threading.Lock()
         self._next_context = {"task_generation": None, "execution_generation": None}
@@ -185,6 +193,7 @@ class Client:
             if self._socket is not connection:
                 raise EOFError
             self._next_context.update(reply.get("next_context", {}))
+            self._binding_epoch += 1
         except Exception:
             if self._socket is connection:
                 self._socket = self._stream = None
@@ -193,6 +202,11 @@ class Client:
             connection.close()
             raise
         return self
+
+    @property
+    def binding_revision(self):
+        """Local binding/execution revision, for connection-scoped push routes."""
+        return self._binding_epoch, self._next_context.get("execution_generation")
 
     def close(self):
         stream, connection = self._stream, self._socket

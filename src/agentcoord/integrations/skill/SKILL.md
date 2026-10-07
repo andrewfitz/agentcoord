@@ -97,3 +97,13 @@ and confirm the client loaded and ran them. Existing MCP sessions may retain an
 old catalog: use the installed CLI until a natural reconnect refreshes it, without
 force-restarting sessions or invoking retired cached tools. Use `doctor --live`
 for diagnosis. The local OS user is the trust boundary.
+
+## Native wake signals
+
+Use `send --wake` / MCP `send(wake=true)` for an actionable dependency or handoff
+that needs an idle peer's attention. Agentcoord selects the native adapter; never
+choose a recipient harness/session or inject terminal input. Ordinary updates stay
+silent. On a native wake signal, run one `sync`, read relevant messages, act within
+existing authority and consume handled messages. No courtesy reply or polling.
+Unavailable delivery never blocks independent work. Consult the workflow reference
+for one-time repository policy and native Channel/shared-daemon activation.

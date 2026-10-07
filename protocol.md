@@ -238,3 +238,31 @@ reachable does not prove every open harness has reloaded its integration.
 The local OS user is the trust boundary. Private state/socket permissions and
 native capabilities prevent accidental cross-session or cross-workspace access;
 they do not sandbox arbitrary malicious processes owned by that same user.
+
+## Native wake signals
+
+A directed `send --wake` requests native attention through the recipient's
+registered harness. The agent-facing command is identical across harnesses.
+Use it only when a concrete dependency, handoff or decision needs an idle agent's
+attention; ordinary progress stays silent. Native wake consent comes from
+`[native] wake_enabled = true` or an exact-execution `wake configure` preference.
+It does not grant new task authority or offline resume consent.
+
+The message and a coalesced unsent delivery intent are one transaction in the
+existing database. The service's existing bounded workers dispatch it after a
+short debounce. Recipient task/execution generations, pause/completion state,
+consent, process evidence and native workspace are rechecked before delivery.
+Folder scope, display labels and history never select a destination. Only live
+native targets are attached; do not load a standalone session in another process.
+
+The signal is a fixed sync instruction and receipt ID, not executable peer prose.
+The recipient runs one `sync`, reads relevant records, handles only authorized
+work and consumes messages after acting. No polling, heartbeat message, courtesy
+reply or forced acknowledgment is required. Native approval requests stay native.
+
+Message acceptance, signal delivery, turn execution and explicit handling are
+separate facts. A missing adapter leaves the durable message pending and must not
+block independent edits, tests or owned-file commits. Unknown external-effect
+outcomes stay uncertain; inspect `wake get`, never blindly repeat a native signal.
+`wake reconcile` resolves only from explicit handling evidence and sends nothing.
+See README's harness activation table for supported transports and current limits.

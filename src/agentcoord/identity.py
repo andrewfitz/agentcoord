@@ -117,7 +117,7 @@ def assign_task(tx, context: Context, task: str) -> dict:
         return actor
     if actor["reported_state"] in {"paused", "completed"}:
         raise CoordinationError("NOT_AUTHORIZED", "Explicitly resume paused/completed work before reassignment")
-    if tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') LIMIT 1",
+    if tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') AND kind NOT IN ('message.wake','wake.reconcile') LIMIT 1",
                              (actor["id"],)).fetchone():
         raise CoordinationError("RECONCILIATION_REQUIRED", "Reconcile own external operations before reassignment")
     generation = str(uuid.uuid4())
@@ -331,7 +331,7 @@ def apply_lifecycle_event(tx, context, *, state, execution_generation, event, no
         return {"applied": False, "reason": "ambiguous_generation" if execution_generation is None else "stale_generation"}
     if actor["reported_state"] in {"paused", "completed"} and state not in {"paused", "completed"}:
         return {"applied": False, "reason": "explicit_resume_required"}
-    if state == "completed" and tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') LIMIT 1", (actor["id"],)).fetchone():
+    if state == "completed" and tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') AND kind NOT IN ('message.wake','wake.reconcile') LIMIT 1", (actor["id"],)).fetchone():
         return {"applied": False, "reason": "reconciliation_required"}
     tx.connection.execute("UPDATE actors SET reported_state=?,resume_inhibited=CASE WHEN ? THEN 1 ELSE resume_inhibited END,checkpoint_json=?,version=version+1 WHERE id=?",
                           (state, int(state == "paused"), canonical_json({"note": note, "event": event}), actor["id"]))
@@ -556,7 +556,7 @@ def _checkpoint(service, context, arguments, tx):
     consent = arguments.get("resume_enabled", actor["resume_enabled"])
     if type(consent) is not bool:
         raise CoordinationError("INVALID_ARGUMENT", "resume_enabled must be boolean")
-    if state == "completed" and tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') LIMIT 1", (actor["id"],)).fetchone():
+    if state == "completed" and tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') AND kind NOT IN ('message.wake','wake.reconcile') LIMIT 1", (actor["id"],)).fetchone():
         raise CoordinationError("RECONCILIATION_REQUIRED", "Cannot complete unresolved own external operations")
     tx.connection.execute("UPDATE actors SET reported_state=?,resume_enabled=?,resume_inhibited=CASE WHEN ? THEN 0 ELSE resume_inhibited END,checkpoint_json=?,version=version+1 WHERE id=?",
         (state, int(consent), int(consent), canonical_json({"note": note}), actor["id"]))

@@ -258,10 +258,26 @@ CATALOG = (
             },
             "context": {"type": "object"},
             "requested_ack": {"type": "boolean"},
+            "wake": {"type": "boolean", "description": "Request native delivery to opted-in recipients; adapters are selected automatically."},
         },
         ("recipients", "kind", "subject", "body"),
         True,
         (),
+    ),
+    _spec(
+        "wake.configure", "wake configure", "wake_configure",
+        "Enable or disable native wake signals for this exact native execution. Repository policy can enable it without per-agent calls.",
+        {"enabled": {"type": "boolean"}}, ("enabled",), True, (),
+    ),
+    _spec(
+        "wake.get", "wake get", "wake_get",
+        "Read a wake delivery receipt. Native delivery and explicit message handling are separate.",
+        {"operation_id": {"type": "string", "format": "uuid"}}, ("operation_id",), False, (),
+    ),
+    _spec(
+        "wake.reconcile", "wake reconcile", "wake_reconcile",
+        "Resolve uncertain native delivery from explicit handling evidence. Never resends a signal.",
+        {"operation_id": {"type": "string", "format": "uuid"}}, ("operation_id",), True, (),
     ),
     _spec(
         "message.get",

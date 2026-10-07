@@ -296,3 +296,10 @@ def test_close_interrupts_binding_handshake_read(tmp_path):
         finally:
             release.set()
             thread.join(3)
+
+
+def test_closed_binding_stream_is_transport_loss():
+    stream = io.BytesIO()
+    stream.close()
+    with pytest.raises(EOFError):
+        read_frame(stream)

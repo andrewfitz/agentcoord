@@ -26,6 +26,7 @@ from . import (
     pending,
     readiness,
     transport,
+    wake,
     work,
 )
 from .config import discover_workspace, load_config
@@ -57,6 +58,7 @@ def build_service(workspace, config=None):
             jobs,
             pending,
             operator,
+            wake,
         )
         for item in domain.operations()
     )
@@ -71,6 +73,8 @@ def build_service(workspace, config=None):
                 "commit.execute": commits.execute_operation,
                 "commit.reconcile": commits.execute_operation,
                 "job.execute": jobs.execute_operation,
+                "message.wake": wake.execute_operation,
+                "wake.reconcile": wake.reconcile_operation,
                 **readiness.slow_handlers(),
             },
         },
@@ -271,7 +275,7 @@ def _presence_batch(service, after):
                 archived = tx.connection.execute(
                     """UPDATE actors SET archived=1 WHERE id=? AND NOT EXISTS
                     (SELECT 1 FROM bindings WHERE actor_id=? AND revoked_us IS NULL) AND NOT EXISTS
-                    (SELECT 1 FROM operations WHERE actor_id=? AND state IN ('queued','running','uncertain'))
+                    (SELECT 1 FROM operations WHERE actor_id=? AND state IN ('queued','running','uncertain') AND kind NOT IN ('message.wake','wake.reconcile'))
                     AND NOT EXISTS (SELECT 1 FROM jobs WHERE actor_id=? AND state IN ('pending','running','uncertain'))
                     AND NOT EXISTS (SELECT 1 FROM commit_grants g JOIN commit_admissions a ON a.id=g.admission_id
                         WHERE a.actor_id=? AND g.state IN ('active','uncertain'))""",
@@ -314,8 +318,11 @@ class _Runtime:
                         queued = [
                             row[0]
                             for row in tx.connection.execute(
-                                "SELECT id FROM operations WHERE state='queued' ORDER BY created_us,id LIMIT ?",
+                                """SELECT id FROM operations WHERE state='queued'
+                                AND (kind!='message.wake' OR json_extract(arguments_json,'$.ready_us')<=?)
+                                ORDER BY created_us,id LIMIT ?""",
                                 (
+                                    core.now_us(),
                                     self.service.config.slow_workers
                                     + self.service.config.slow_queue,
                                 ),
@@ -363,7 +370,8 @@ def make_server(service):
         with service.store.read() as tx:
             counts = dict(
                 tx.connection.execute(
-                    "SELECT state,COUNT(*) FROM operations WHERE state IN ('running','uncertain') GROUP BY state"
+                    """SELECT state,COUNT(*) FROM operations WHERE state IN ('running','uncertain')
+                    AND (state='running' OR kind NOT IN ('message.wake','wake.reconcile')) GROUP BY state"""
                 ).fetchall()
             )
             manual = tx.connection.execute("""SELECT COUNT(*) FROM commit_grants g JOIN commit_admissions a ON a.id=g.admission_id

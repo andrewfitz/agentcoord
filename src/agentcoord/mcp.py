@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sys
+import uuid
+from pathlib import Path
 
 import anyio
 from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.stdio import stdio_server
+from mcp.shared.message import SessionMessage
 
 from .cli import BY_TOOL, CATALOG, invoke, native_context
-from .core import CoordinationError
+from .core import CoordinationError, identifier
 from .transport import MAX_FRAME, Client, error_envelope
 
 
@@ -66,8 +70,94 @@ def tool_result(envelope):
     return result
 
 
-def create_server(client):
+class ChannelReceiver:
+    """Event-driven push on the existing Claude MCP stream, no model polling."""
+
+    def __init__(self, client, write, group):
+        self.client, self.write, self.group = client, write, group
+        self.listener = self.path = self.route = None
+        self.lock = anyio.Lock()
+        self.attempted = False
+        self.retry_after_bind = False
+        self.seen = set()
+        self.revision = None
+
+    async def start(self, *, bound=False):
+        async with self.lock:
+            revision = getattr(self.client, 'binding_revision', None)
+            if self.listener and revision != self.revision:
+                await self.close()
+                self.listener = self.path = self.route = None
+                self.attempted = False
+            if self.listener or (self.attempted and not (bound and self.retry_after_bind)):
+                return
+            self.attempted = True
+            self.retry_after_bind = False
+            try:
+                reply = await anyio.to_thread.run_sync(lambda: self.client.call('wake.channel', {}, key=str(uuid.uuid4())))
+            except CoordinationError as error:
+                self.retry_after_bind = error.code == 'UNBOUND_ACTOR' and not bound
+                raise
+            if not reply.get('ok'):
+                # A hook may not have registered native startup yet. A later
+                # successful native tool binding is a concrete setup change.
+                self.retry_after_bind = reply.get('error', {}).get('code') == 'UNBOUND_ACTOR' and not bound
+                return
+            self.route = reply['data']
+            self.path = Path(self.route['path'])
+            self.listener = await anyio.create_unix_listener(self.path, mode=0o600, backlog=8)
+            self.revision = getattr(self.client, 'binding_revision', None)
+            self.group.start_soon(self.listen, self.listener)
+
+    async def listen(self, listener):
+        try:
+            await listener.serve(self.receive)
+        except (anyio.ClosedResourceError, anyio.BrokenResourceError):
+            return
+
+    async def receive(self, stream):
+        async with stream:
+            try:
+                with anyio.fail_after(4):
+                    frame = bytearray()
+                    while not frame.endswith(b'\n') and len(frame) < 1024:
+                        frame.extend(await stream.receive(1024 - len(frame)))
+                    payload = json.loads(frame)
+                    if not secrets.compare_digest(payload.get('nonce', ''), self.route['nonce']):
+                        return
+                    oid = identifier(payload.get('operation_id'), 'operation_id')
+                    if oid not in self.seen:
+                        await self.write.send(SessionMessage(types.JSONRPCNotification(
+                            jsonrpc='2.0', method='notifications/claude/channel', params={
+                                'content': 'Agentcoord has pending directed messages. Run agentcoord sync once and handle relevant messages within your existing scope. No courtesy acknowledgment or polling.',
+                                'meta': {'wake_id': oid},
+                            })))
+                        # Bounded same-connection suppression; durable uncertainty
+                        # prevents automatic replays across process restarts.
+                        if len(self.seen) >= 128:
+                            self.seen.clear()
+                        self.seen.add(oid)
+                    await stream.send(b'{"delivered":true}\n')
+            except (CoordinationError, ValueError, TypeError, TimeoutError, anyio.EndOfStream,
+                    anyio.BrokenResourceError, anyio.ClosedResourceError):
+                return
+
+    async def close(self):
+        if self.listener:
+            await self.listener.aclose()
+            try:
+                self.path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def create_server(client, *, channel=None):
     async def list_tools(context, params):
+        if channel:
+            try:
+                await channel.start()
+            except (CoordinationError, OSError):
+                pass  # Channel availability cannot block the ordinary tool catalog.
         return types.ListToolsResult(
             tools=[
                 types.Tool(
@@ -94,6 +184,11 @@ def create_server(client):
             )
         try:
             envelope = await anyio.to_thread.run_sync(lambda: invoke(client, spec, arguments or {}))
+            if channel and envelope.get('ok'):
+                try:
+                    await channel.start(bound=True)
+                except (CoordinationError, OSError):
+                    pass
         except CoordinationError as exc:
             envelope = error_envelope(
                 exc.code,
@@ -107,12 +202,22 @@ def create_server(client):
     return Server("agentcoord", on_list_tools=list_tools, on_call_tool=call_tool)
 
 
-async def serve(client, *, stdin=None, stdout=None):
-    server = create_server(client)
+async def serve(client, *, stdin=None, stdout=None, channel=False):
     source = stdin or BoundedInput(sys.stdin.buffer)
     destination = stdout or BoundedOutput(sys.stdout.buffer)
-    async with stdio_server(source, destination) as (read, write):
-        await server.run(read, write, server.create_initialization_options())
+    async with stdio_server(source, destination) as (read, write):  # noqa: SIM117 — transport owns stream lifetime.
+        async with anyio.create_task_group() as group:
+            receiver = ChannelReceiver(client, write, group) if channel else None
+            server = create_server(client, channel=receiver)
+            options = server.create_initialization_options(
+                experimental_capabilities={'claude/channel': {}} if channel else None)
+            try:
+                await server.run(read, write, options)
+            finally:
+                if receiver:
+                    with anyio.CancelScope(shield=True):
+                        await receiver.close()
+                group.cancel_scope.cancel()
 
 
 def run(workspace, *, harness=None):
@@ -124,6 +229,8 @@ def run(workspace, *, harness=None):
     try:
         # Hosts may negotiate MCP before SessionStart registers this captured
         # native process. Bind once when the first tool invocation reaches call.
-        anyio.run(serve, client)
+        async def serving():
+            await serve(client, channel=context.get('harness') == 'claude')
+        anyio.run(serving)
     finally:
         client.close()
