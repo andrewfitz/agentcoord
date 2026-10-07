@@ -87,19 +87,16 @@ Put that environment's `bin` directory on `PATH`, or use its absolute
 ### Homebrew: current locked macOS ARM64 target
 
 The release includes a formula and an archive containing all pinned dependency
-wheels. Homebrew installs those inputs offline with hashes checked. This is a
-local tap, not a formula in Homebrew core:
+wheels. Homebrew installs those inputs offline with hashes checked. The same
+Agentcoord repository also serves as its Homebrew tap:
 
 ```sh
-brew tap-new local/agentcoord
-curl --fail --location \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.10/agentcoord.rb \
-  --output "$(brew --repository local/agentcoord)/Formula/agentcoord.rb"
-brew install local/agentcoord/agentcoord
+brew tap andrewfitz/agentcoord https://github.com/andrewfitz/agentcoord.git
+brew install andrewfitz/agentcoord/agentcoord
 agentcoord --help
 ```
 
-Create the tap only once. Homebrew may first need to install its Python
+Tap the repository only once. Homebrew may first need to install its Python
 prerequisite; Agentcoord's locked bundle itself does not compile dependencies.
 
 ### From source
@@ -355,9 +352,20 @@ is implied by the bounded retrieval APIs.
 ## Update, recover and remove
 
 For the pipx installation, install the desired release wheel with `pipx install
---force --pip-args='--only-binary=:all:' RELEASE_WHEEL_URL`. For Brew, download the
-new release's formula into the existing local tap, then run
-`brew upgrade local/agentcoord/agentcoord`. Keep release archives immutable.
+--force --pip-args='--only-binary=:all:' RELEASE_WHEEL_URL`. For Brew, use
+`brew upgrade agentcoord`; Homebrew fetches formula updates from the tap through
+its normal auto-update. Use `brew update` first to explicitly refresh immediately.
+Keep release archives immutable.
+
+For an existing installation from the old `local/agentcoord` tap, migrate once:
+
+```sh
+brew tap andrewfitz/agentcoord https://github.com/andrewfitz/agentcoord.git
+brew reinstall andrewfitz/agentcoord/agentcoord
+brew untap local/agentcoord
+```
+
+This changes the package's tap without deleting workspace databases or settings.
 Initialization refuses to downgrade managed instructions. Hash-only installation
 manifests upgrade on apply; older installers refuse the new manifest format.
 
@@ -482,6 +490,13 @@ hash-checked. `--installation-url` sets the bundle download URL;
 `--source-url` records source provenance only. Neither flag uploads anything.
 Upload artifacts only after verification; retain each released archive unchanged.
 Local build receipts can contain machine paths and should stay local.
+
+The `Update Homebrew tap` GitHub workflow promotes the formula from each published
+stable release to `Formula/agentcoord.rb` on `main`. It verifies formula and bundle
+checksums, exact release URLs and versions, and refuses downgrades or changed
+artifacts for an existing version. Prereleases do not update the tap. The workflow
+can also be dispatched manually for a published stable tag. No second tap
+repository or cross-repository token is needed.
 
 Questions and defects: [GitHub Issues](https://github.com/andrewfitz/agentcoord/issues).
 

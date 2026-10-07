@@ -33,5 +33,9 @@ protocol.md owns coordination behavior.
 - Release archives are immutable. Build a new release and update the Homebrew
   formula for a package change; never overwrite a retained release artifact.
   Source readiness, installed verification and live activation are separate.
+- This repository is also the Homebrew tap. Publish the immutable release assets
+  including the formula and SHA256SUMS; the Homebrew workflow verifies and
+  promotes stable releases to Formula/agentcoord.rb. Keep that formula pointing
+  at a published release, not local files or an unreleased version.
 
 Use `agentcoord --help` and protocol.md for the actual command contracts.

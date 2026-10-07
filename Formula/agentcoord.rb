@@ -1,0 +1,23 @@
+# Generated from immutable release artifacts by scripts/build_release.py.
+class Agentcoord < Formula
+  include Language::Python::Virtualenv
+  desc "Native coordination for agents sharing a local Git workspace"
+  url "https://github.com/andrewfitz/agentcoord/releases/download/v0.1.10/agentcoord-install.tar.gz"
+  version "0.1.10"
+  sha256 "fc091481648b82b77a99ebec4ddcc75bac5f815f08a09889b55cb016e1c01005"
+  depends_on "python@3.14"
+
+  def install
+    python = Formula["python@3.14"].opt_bin/"python3.14"
+    system python, "-c", "import sys,sysconfig; actual=f'{sys.implementation.name}-{sys.version_info.major}{sys.version_info.minor}-{sysconfig.get_platform()}'; assert actual == 'cpython-314-macosx-27.0-arm64', 'release target mismatch: '+actual; assert sysconfig.get_config_var('SOABI') == 'cpython-314-darwin', 'release ABI mismatch'"
+    virtualenv_create(libexec, "python3.14", system_site_packages: false)
+    system python, "-m", "pip", "--python=#{libexec}/bin/python", "install",
+           "--no-index", "--only-binary=:all:", "--require-hashes",
+           "--find-links=#{buildpath}/wheels", "--requirement=#{buildpath}/requirements.txt"
+    bin.install_symlink libexec/"bin/agentcoord"
+  end
+
+  test do
+    assert_match "agentcoord", shell_output("#{bin}/agentcoord --help")
+  end
+end
