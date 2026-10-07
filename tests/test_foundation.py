@@ -252,7 +252,7 @@ def test_unknown_stop_is_only_observation_and_explicit_pause_stays_paused(system
         assert identity.actor_for_context(tx, current)["reported_state"] == "paused"
 
 
-def test_verified_native_start_uses_origin_process_proof_but_stop_does_not_guess(system):
+def test_verified_hook_stop_correlates_origin_process_and_keeps_session_execution(system):
     service, _ = system
     proof = identity.process_identity(os.getpid())
     assert proof and identity.process_status(proof) == "alive"
@@ -260,8 +260,15 @@ def test_verified_native_start_uses_origin_process_proof_but_stop_does_not_guess
     started = invoke(system, "identity.event", {"event": "start", "state": "working"}, key=uid(), context=bound["context"])
     assert started["ok"] and started["data"]["applied"]
     assert started["next_context"]["execution_generation"]
-    stopped = invoke(system, "identity.event", {"event": "stop", "state": "completed"}, key=uid(), context=bound["context"])
-    assert stopped["data"]["reason"] == "ambiguous_generation"
+    current = identity.context_from_token(service.store, bound["token"])
+    stopped = invoke(system, "identity.event", {"event": "stop", "state": "idle"}, key=uid(), context=current)
+    assert stopped["data"]["applied"]
+    with service.store.read() as tx:
+        assert tx.connection.execute("SELECT state FROM executions WHERE generation=?", (current.execution_generation,)).fetchone()[0] == "running"
+    ended = invoke(system, "identity.event", {"event": "end", "state": "idle"}, key=uid(), context=current)
+    assert ended["data"]["applied"]
+    with service.store.read() as tx:
+        assert tx.connection.execute("SELECT state FROM executions WHERE generation=?", (current.execution_generation,)).fetchone()[0] == "ended"
 
 
 def test_draining_allows_exact_reconnect_but_no_registration_or_run_start(system):
@@ -634,3 +641,63 @@ def test_public_actor_views_do_not_expand_imported_history(system):
         stored = tx.connection.execute("SELECT metadata_json,checkpoint_json FROM actors WHERE id=?", (context.actor_id,)).fetchone()
         assert json.loads(stored["metadata_json"]) == metadata
         assert json.loads(stored["checkpoint_json"]) == {"note": "complete"}
+
+
+def test_process_only_mcp_resolves_proven_parent_group_without_impersonating_children(system):
+    service, _ = system
+    proof = identity.process_identity(os.getpid())
+    session = uid()
+    parent = identity.bind_native(service.store, {"harness": "claude", "native_session_id": session,
+        "process_identity": proof}, transport="hook")
+    with service.store.write() as tx:
+        identity.start_execution(tx, parent['context'], native_run_id='actual-parent-run', process_proof=proof)
+    children = [identity.bind_native(service.store, {"harness": "claude", "native_session_id": session,
+        "child_id": f'child-{i}', "process_identity": proof}, transport="hook") for i in range(100)]
+    captured = {'harness': 'claude', 'process_identity': proof, 'source': 'verified_process'}
+    group = identity.bind_native(service.store, captured, transport='mcp')
+    assert group['context'].actor_id == parent['context'].actor_id
+    assert group['context'].identity_mode == 'shared_group'
+    # Independent calls require actual child context, never PID-only selection.
+    child = identity.bind_native(service.store, {**captured, 'child_id': 'child-99'}, transport='cli')
+    assert child['context'].actor_id == children[-1]['context'].actor_id
+    for transport in ('cli', 'hook'):
+        with pytest.raises(CoordinationError, match='unique registered session'):
+            identity.bind_native(service.store, captured, transport=transport)
+    # Two canonical native sessions sharing the proof cannot select a winner.
+    identity.bind_native(service.store, {'harness': 'claude', 'native_session_id': uid(), 'process_identity': proof})
+    with pytest.raises(CoordinationError, match='unique registered session'):
+        identity.bind_native(service.store, captured, transport='mcp')
+
+
+def test_process_only_mcp_rejects_unproven_parent_and_unidentified_child(system):
+    service, _ = system
+    proof = identity.process_identity(os.getpid())
+    session = uid()
+    captured = {'harness': 'claude', 'process_identity': proof}
+    identity.bind_native(service.store, {**captured, 'native_session_id': session, 'child_id': 'child'})
+    with pytest.raises(CoordinationError):
+        identity.bind_native(service.store, captured, transport='mcp')
+    identity.bind_native(service.store, {**captured, 'native_session_id': session})
+    with pytest.raises(CoordinationError):
+        identity.bind_native(service.store, captured, transport='mcp')
+
+
+def test_late_hook_process_cannot_end_new_execution_and_reused_process_is_ambiguous(system):
+    service, _ = system
+    proof = identity.process_identity(os.getpid())
+    native = {'harness': 'claude', 'native_session_id': uid(), 'process_identity': proof}
+    bound = identity.bind_native(service.store, native, transport='hook')
+    with service.store.write() as tx:
+        old = identity.start_execution(tx, bound['context'], native_run_id='old', process_proof=proof)
+        new_proof = {**proof, 'pid': proof['pid'] + 1}
+        new = identity.start_execution(tx, bound['context'], native_run_id='new', process_proof=new_proof)
+    context = identity.context_from_token(service.store, bound['token'])
+    late = invoke(system, 'identity.event', {'event': 'child_stop', 'state': 'completed'}, key=uid(), context=context)
+    assert late['data']['reason'] == 'stale_generation'
+    with service.store.write() as tx:
+        # More than one execution with identical process evidence is insufficient.
+        identity.start_execution(tx, context, native_run_id='same-process-new-run', process_proof=proof)
+    context = identity.context_from_token(service.store, bound['token'])
+    ambiguous = invoke(system, 'identity.event', {'event': 'end', 'state': 'idle'}, key=uid(), context=context)
+    assert ambiguous['data']['reason'] == 'ambiguous_generation'
+    assert old['execution_generation'] != new['execution_generation']

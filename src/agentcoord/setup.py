@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shlex
 from pathlib import Path
 
 import tomlkit
 
+from . import __version__
 from .install import (
     HARNESSES,
     InstallError,
@@ -181,8 +183,15 @@ def _resource_plan(root: Path, harnesses, *, instructions=True) -> list[tuple]:
     manifest_path = root / RESOURCE_MANIFEST
     manifest_bytes = _bytes(manifest_path)
     manifest = _json(manifest_path, manifest_bytes)
-    if manifest and (manifest.get("schema_version") != 1 or not isinstance(manifest.get("resources"), dict)):
+    if manifest and (type(manifest.get("schema_version")) is not int or manifest["schema_version"] not in {1, 2}
+                     or not isinstance(manifest.get("resources"), dict)):
         raise InstallError(f"Invalid installed-resource manifest: {manifest_path}")
+    if manifest.get("schema_version") == 2:
+        release = manifest.get("package_version")
+        if not isinstance(release, str) or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", release):
+            raise InstallError(f"Invalid installed package version: {manifest_path}")
+        if tuple(int(part) for part in release.split(".")) > tuple(int(part) for part in __version__.split(".")):
+            raise InstallError(f"Refuse instruction downgrade from {release} to {__version__}; install the current package")
     owned = dict(manifest.get("resources", {}))
     planned = []
     for relative, content in skill_resources(harnesses).items():
@@ -197,7 +206,9 @@ def _resource_plan(root: Path, harnesses, *, instructions=True) -> list[tuple]:
             raise InstallError(f"Preserve modified or foreign skill resource; review it before updating: {path}")
         planned.append((path, original, content))
         owned[relative] = hashlib.sha256(content).hexdigest()
-    updated = (json.dumps({"schema_version": 1, "resources": owned}, indent=2, sort_keys=True) + "\n").encode()
+    # Older installers refuse schema 2 rather than accepting hashes and silently
+    # restoring obsolete instructions. Schema 1 is upgraded on the first apply.
+    updated = (json.dumps({"schema_version": 2, "package_version": __version__, "resources": owned}, indent=2, sort_keys=True) + "\n").encode()
     planned.append((manifest_path, manifest_bytes, updated))
     return planned
 

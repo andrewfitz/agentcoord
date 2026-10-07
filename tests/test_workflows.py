@@ -740,3 +740,18 @@ def test_imported_oversized_decision_escalation_retains_complete_content(runtime
         notice = messages.select_unhandled(tx, parent)[0]
         message = messages.read_message(tx, parent, notice['id'])
         assert 'retrieve the complete retained decision' in message['body']
+
+
+def test_interleaved_uncertainty_is_compacted_per_execution_without_state_effects(runtime):
+    service, _ = runtime
+    owner = context(runtime, 1)
+    with service.store.write() as tx:
+        before = identity._actor(tx, owner.actor_id)
+        for _ in range(10):
+            for event in ('stop', 'end', 'failure'):
+                identity.apply_lifecycle_event(tx, owner, state='completed', execution_generation=None, event=event)
+        assert identity._actor(tx, owner.actor_id) == before
+        assert tx.connection.execute("SELECT COUNT(*) FROM events WHERE actor_id=? AND kind='ambiguous_event'", (owner.actor_id,)).fetchone()[0] == 3
+        identity.start_execution(tx, owner, native_run_id='new-execution')
+        identity.apply_lifecycle_event(tx, owner, state='completed', execution_generation=None, event='stop')
+        assert tx.connection.execute("SELECT COUNT(*) FROM events WHERE actor_id=? AND kind='ambiguous_event'", (owner.actor_id,)).fetchone()[0] == 4

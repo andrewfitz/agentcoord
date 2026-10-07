@@ -422,3 +422,35 @@ def test_cli_apply_and_candidate_modes_are_mutually_exclusive(tmp_path, capsys):
     assert error.value.code == 2
     assert snapshot(tmp_path) == before
     capsys.readouterr()
+
+
+def test_manifest_upgrade_and_instruction_downgrade_refusal_are_atomic(setup_layout, monkeypatch):
+    from agentcoord import setup
+    root, home = setup_layout
+    install.init_project(root, apply=True, home=home)
+    path = root / setup.RESOURCE_MANIFEST
+    current = json.loads(path.read_text())
+    assert current['schema_version'] == 2 and current['package_version'] == setup.__version__
+    # The older hash-only format upgrades without editing managed resources.
+    legacy = {'schema_version': 1, 'resources': current['resources']}
+    write_json(path, legacy)
+    resources = {name: (root / name).read_bytes() for name in legacy['resources']}
+    install.init_project(root, apply=True, home=home)
+    assert json.loads(path.read_text()) == current
+    assert resources == {name: (root / name).read_bytes() for name in legacy['resources']}
+    before = snapshot(root), snapshot(home)
+    monkeypatch.setattr(setup, '__version__', '0.1.0')
+    with pytest.raises(install.InstallError, match='downgrade'):
+        install.init_project(root, apply=True, home=home)
+    assert (snapshot(root), snapshot(home)) == before
+
+
+@pytest.mark.parametrize('version', [None, 10, 'not-a-version', '1.2', '1.2.3.4'])
+def test_invalid_manifest_release_is_not_a_clean_install(setup_layout, version):
+    from agentcoord import setup
+    root, home = setup_layout
+    write_json(root / setup.RESOURCE_MANIFEST, {'schema_version': 2, 'package_version': version, 'resources': {}})
+    before = snapshot(root)
+    with pytest.raises(install.InstallError, match='version'):
+        install.init_project(root, apply=True, home=home)
+    assert snapshot(root) == before

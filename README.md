@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.7/agentcoord-0.1.7-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.8/agentcoord-0.1.8-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.7/agentcoord-0.1.7-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.8/agentcoord-0.1.8-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -93,7 +93,7 @@ local tap, not a formula in Homebrew core:
 ```sh
 brew tap-new local/agentcoord
 curl --fail --location \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.7/agentcoord.rb \
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.8/agentcoord.rb \
   --output "$(brew --repository local/agentcoord)/Formula/agentcoord.rb"
 brew install local/agentcoord/agentcoord
 agentcoord --help
@@ -154,7 +154,7 @@ according to that repository's rules.
 | `.codex/config.toml`, `.codex/hooks.json` | Codex project integration |
 | `.cursor/mcp.json`, `.cursor/hooks.json` | Cursor project integration |
 | `.grok/config.toml`, `.grok/hooks/agentcoord.json` | Grok project integration |
-| `.agentcoord/installation.json` | Installed resource hashes for safe updates |
+| `.agentcoord/installation.json` | Installed resource hashes and release guard for safe updates |
 
 Only the selected harnesses are configured. The shared skill is repository
 neutral: it teaches commands, messaging, overlap decisions, handoffs, retries and
@@ -191,6 +191,12 @@ integration. Verify `agentcoord identity` from inside an actual agent session an
 inspect `doctor --live`. Configuration, connectivity, identity binding and
 observed lifecycle execution are separate checks. Cached MCP clients can use the
 installed CLI until a natural reconnect refreshes their tool catalog.
+
+Process-only shared MCP binding identifies the proven native parent group, not
+an independently calling child. Child attribution needs actual native child
+context. A parent's live process alone leaves child presence unknown; a correlated
+child stop ends that child's execution. Normal turn stops do not end the parent
+session execution.
 
 Humans can inspect without adopting an agent identity:
 
@@ -352,6 +358,8 @@ For the pipx installation, install the desired release wheel with `pipx install
 --force --pip-args='--only-binary=:all:' RELEASE_WHEEL_URL`. For Brew, download the
 new release's formula into the existing local tap, then run
 `brew upgrade local/agentcoord/agentcoord`. Keep release archives immutable.
+Initialization refuses to downgrade managed instructions. Hash-only installation
+manifests upgrade on apply; older installers refuse the new manifest format.
 
 After updating the executable, update each workspace separately:
 

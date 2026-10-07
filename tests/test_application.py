@@ -315,3 +315,52 @@ def test_offline_retirement_preserves_pending_execution_authority(service, monke
     application._presence_batch(service, '')
     with service.store.read() as tx:
         assert not tx.connection.execute('SELECT archived FROM actors WHERE id=?', (owner.actor_id,)).fetchone()[0]
+
+
+def test_child_presence_requires_independent_process_or_correlated_end(service, monkeypatch):
+    import os
+
+    from agentcoord import application, identity
+    from agentcoord.core import Call
+    proof = identity.process_identity(os.getpid())
+    native = {'harness': 'claude', 'native_session_id': 'shared-parent', 'process_identity': proof}
+    parent = identity.bind_native(service.store, native, transport='hook')
+    child = identity.bind_native(service.store, {**native, 'child_id': 'actual-child'}, transport='hook')
+    independent = identity.bind_native(service.store, {**native, 'child_id': 'independent-child',
+        'process_identity': {**proof, 'pid': proof['pid'] + 1}}, transport='hook')
+    for binding in (parent, child, independent):
+        result = service.execute(binding['context'], Call('identity.event', {'event': 'start', 'state': 'working'}, str(uuid.uuid4())))
+        assert result['ok'], result
+    monkeypatch.setattr(identity, 'process_status', lambda *_: 'alive')
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        states = {r['actor_id']: (r['observed_state'], r['confidence']) for r in tx.connection.execute('SELECT * FROM presence')}
+    assert states[parent['context'].actor_id] == ('running', 'verified')
+    assert states[child['context'].actor_id] == ('unknown', 'unknown')
+    assert states[independent['context'].actor_id] == ('running', 'verified')
+    current = identity.context_from_token(service.store, child['token'])
+    ended = service.execute(current, Call('identity.event', {'event': 'child_stop', 'state': 'completed'}, str(uuid.uuid4())))
+    assert ended['ok'] and ended['data']['applied'], ended
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        observed = tx.connection.execute('SELECT observed_state,confidence FROM presence WHERE actor_id=?', (current.actor_id,)).fetchone()
+        assert tuple(observed) == ('offline', 'verified')
+
+
+def test_parent_registration_during_presence_observation_cannot_mark_child_running(service, monkeypatch):
+    import os
+
+    from agentcoord import application, identity
+    proof = identity.process_identity(os.getpid())
+    native = {'harness': 'claude', 'native_session_id': 'registration-race', 'process_identity': proof}
+    child = identity.bind_native(service.store, {**native, 'child_id': 'child'}, transport='hook')
+    def register_parent(_):
+        identity.bind_native(service.store, native, transport='hook')
+        return 'alive'
+    monkeypatch.setattr(identity, 'process_status', register_parent)
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        assert tx.connection.execute('SELECT 1 FROM presence WHERE actor_id=?', (child['context'].actor_id,)).fetchone() is None
+    application._presence_batch(service, '')
+    with service.store.read() as tx:
+        assert tx.connection.execute('SELECT observed_state FROM presence WHERE actor_id=?', (child['context'].actor_id,)).fetchone()[0] == 'unknown'

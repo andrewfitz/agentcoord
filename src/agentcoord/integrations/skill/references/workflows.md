@@ -126,7 +126,10 @@ instruction. For several selected IDs use `message-batch --ids ...` instead of
 one call per message. Continue with the same IDs and returned `next_index`; read
 remaining bodies through `message ID --offset NEXT_OFFSET`. Metadata and attachment
 indexes retain their own continuations. Batch reads never present, consume or
-acknowledge messages; use `consume-batch` only after handling them.
+acknowledge messages; use `consume-batch` only after handling them. Consume the
+selected IDs after acting, including a message whose requested action is already
+settled by inspected evidence. Keep an unresolved action pending; a read or
+preview alone is not handling. Answer tracked decisions separately.
 
 For attachments, page the index with `attachments`, then join all `reference`
 chunks returned by `attachment` before parsing JSON. Evidence references remain
@@ -141,7 +144,12 @@ A consumer can `dependency subscribe` to a known producer and artifact, specifyi
 the paths and next action. The producer prepares the full counterpart scope,
 performs locally required checks and publishes `ready` with useful evidence.
 Use `handoff` when publishing readiness and sending the recipient notification
-together. Do not claim verification from a source reading or a queued operation.
+together. For a materially shared producer change that affects a known consumer,
+provide one settlement handoff: changed contract, complete counterparts, intended
+invariant, source/check receipt and remaining consumer work. Use the readiness
+notification instead of duplicating it in several messages or activity records.
+No handoff is required for ordinary independent edits. Do not claim verification
+from a source reading or a queued operation.
 
 The consumer reads `dependency updates` and `readiness`, checks complete paths
 and current hashes, examines evidence and accepts the current update before

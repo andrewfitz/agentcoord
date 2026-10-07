@@ -213,8 +213,13 @@ def _presence_batch(service, after):
         rows = [
             dict(row)
             for row in tx.connection.execute(
-                """SELECT id,process_identity_json,
-            current_execution_generation FROM actors WHERE archived=0 AND id>? ORDER BY id LIMIT 32""",
+                """SELECT a.id,a.child_id,a.process_identity_json,a.current_execution_generation,
+            e.state AS execution_state,
+            a.child_id<>'' AND EXISTS (SELECT 1 FROM actors p
+                WHERE p.harness=a.harness AND p.native_session_id=a.native_session_id
+                AND p.id<>a.id AND p.process_identity_json=a.process_identity_json) AS shared_process
+            FROM actors a LEFT JOIN executions e ON e.generation=a.current_execution_generation
+            WHERE a.archived=0 AND a.id>? ORDER BY a.id LIMIT 32""",
                 (after,),
             )
         ]
@@ -223,6 +228,8 @@ def _presence_batch(service, after):
     observed = [
         (
             row,
+            "gone" if row["child_id"] and row["execution_state"] == "ended" else
+            "unknown" if row["shared_process"] else
             identity.process_status(json.loads(row["process_identity_json"]))
             if row["process_identity_json"]
             else "unknown",
@@ -232,13 +239,20 @@ def _presence_batch(service, after):
     with service.store.write() as tx:
         for row, status in observed:
             current = tx.connection.execute(
-                """SELECT process_identity_json,current_execution_generation,reported_state
-                FROM actors WHERE id=?""", (row["id"],)
+                """SELECT a.process_identity_json,a.current_execution_generation,a.reported_state,
+                e.state AS execution_state,
+                a.child_id<>'' AND EXISTS (SELECT 1 FROM actors p
+                    WHERE p.harness=a.harness AND p.native_session_id=a.native_session_id
+                    AND p.id<>a.id AND p.process_identity_json=a.process_identity_json) AS shared_process
+                FROM actors a
+                LEFT JOIN executions e ON e.generation=a.current_execution_generation WHERE a.id=?""", (row["id"],)
             ).fetchone()
             if not current or (
                 current["process_identity_json"],
                 current["current_execution_generation"],
-            ) != (row["process_identity_json"], row["current_execution_generation"]):
+                current["execution_state"],
+                current["shared_process"],
+            ) != (row["process_identity_json"], row["current_execution_generation"], row["execution_state"], row["shared_process"]):
                 continue
             state = {"alive": "running", "gone": "offline", "unknown": "unknown"}[status]
             tx.connection.execute(

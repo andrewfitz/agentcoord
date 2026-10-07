@@ -243,9 +243,23 @@ def bind_native(store, native: dict, *, transport="cli", connection_id=None) -> 
             raise CoordinationError("UNBOUND_ACTOR", "Native startup evidence is missing; register the supported lifecycle hook")
         proof = _validate_process_identity(proof)
         with store.read() as tx:
-            matches = tx.connection.execute("SELECT id,harness,native_session_id,child_id FROM actors WHERE process_identity_json=? AND harness=?",
-                                             (canonical_json(proof), native.get("harness"))).fetchall()
-        if len(matches) != 1:
+            child = bounded_text(native.get("child_id", ""), "child_id", 256, allow_empty=True)
+            matches = tx.connection.execute("""SELECT id,harness,native_session_id,child_id FROM actors
+                WHERE process_identity_json=? AND harness=? AND (?='' OR child_id=?)""",
+                (canonical_json(proof), native.get("harness"), child, child)).fetchall()
+            if len(matches) > 1 and transport == "mcp" and not native.get("child_id"):
+                # A parent-owned MCP server observes the native group process,
+                # not which child used its shared connection. Resolve only a
+                # single proven owner of one canonical session; never pick an
+                # arbitrary child, label or one of multiple session owners.
+                owners = [row for row in matches if not row["child_id"]]
+                sessions = {row["native_session_id"] for row in matches}
+                if len(owners) == 1 and len(sessions) == 1 and tx.connection.execute(
+                    "SELECT 1 FROM executions WHERE actor_id=? AND process_identity_json=? LIMIT 1",
+                    (owners[0]["id"], canonical_json(proof)),
+                ).fetchone():
+                    matches = owners
+        if len(matches) != 1 or (matches[0]["child_id"] and not child):
             raise CoordinationError("UNBOUND_ACTOR", "Native process has no unique registered session; run native startup registration")
         native = {**native, "native_session_id": matches[0]["native_session_id"], "child_id": matches[0]["child_id"]}
     token, connection = secrets.token_urlsafe(32), connection_id or str(uuid.uuid4())
@@ -304,15 +318,15 @@ def apply_lifecycle_event(tx, context, *, state, execution_generation, event, no
         raise CoordinationError("INVALID_ARGUMENT", "Invalid lifecycle state")
     if execution_generation is None or execution_generation != actor["current_execution_generation"]:
         kind = "ambiguous_event" if execution_generation is None else "stale_event"
-        # Repeated uncorrelated hooks add no execution proof. Retain the first
-        # observation, without manufacturing another state transition or event.
-        previous = tx.connection.execute("""SELECT kind,metadata_json FROM events
-            WHERE actor_id=? AND domain='identity' ORDER BY sequence DESC LIMIT 1""",
-            (actor["id"],)).fetchone()
-        metadata = {"event": event}
+        # Interleaved stop/end/failure diagnostics are still the same uncertainty.
+        # Preserve separate current and originating generations, never authority.
+        metadata = {"event": event, "current_execution_generation": actor["current_execution_generation"]}
         if kind == "stale_event":
             metadata["execution_generation"] = execution_generation
-        if not previous or (previous["kind"], previous["metadata_json"]) != (kind, canonical_json(metadata)):
+        previous = tx.connection.execute("""SELECT 1 FROM events
+            WHERE domain='identity' AND record_id=? AND kind=? AND metadata_json=? LIMIT 1""",
+            (actor["id"], kind, canonical_json(metadata))).fetchone()
+        if previous is None:
             tx.event("identity", kind, actor["id"], actor["id"], metadata)
         return {"applied": False, "reason": "ambiguous_generation" if execution_generation is None else "stale_generation"}
     if actor["reported_state"] in {"paused", "completed"} and state not in {"paused", "completed"}:
@@ -321,7 +335,8 @@ def apply_lifecycle_event(tx, context, *, state, execution_generation, event, no
         return {"applied": False, "reason": "reconciliation_required"}
     tx.connection.execute("UPDATE actors SET reported_state=?,resume_inhibited=CASE WHEN ? THEN 1 ELSE resume_inhibited END,checkpoint_json=?,version=version+1 WHERE id=?",
                           (state, int(state == "paused"), canonical_json({"note": note, "event": event}), actor["id"]))
-    if event in {"stop", "end", "child_stop", "failure"}:
+    # Stop/failure are turn boundaries, not proof that the session process ended.
+    if event in {"end", "child_stop"}:
         tx.connection.execute("UPDATE executions SET state='ended',ended_us=COALESCE(ended_us,?) WHERE generation=?",
                               (tx.now_us, execution_generation))
     tx.event("identity", "lifecycle", actor["id"], actor["id"], {"state": state, "execution_generation": execution_generation})
@@ -560,13 +575,23 @@ def _event(service, context, arguments, tx):
     generation = arguments.get("execution_generation")
     run = arguments.get("native_run_id")
     proof = None
-    if event in {"start", "child_start"} and context.transport == "hook":
+    if context.transport == "hook":
         binding = tx.connection.execute("SELECT native_evidence_json FROM bindings WHERE id=?", (context.connection_id,)).fetchone()
         evidence = json.loads(binding[0]) if binding and binding[0] else {}
         proof = evidence.get("process_identity")
-        if run is None and proof is not None:
+        if run is None and generation is None and proof is not None:
             proof = _validate_process_identity(proof)
-            run = "native-process:" + hashlib.sha256(canonical_json(proof).encode()).hexdigest()
+            if event in {"start", "child_start"}:
+                run = "native-process:" + hashlib.sha256(canonical_json(proof).encode()).hexdigest()
+            else:
+                # Use only the event's originating kernel identity. A delayed
+                # hook from an old process must not inherit the current run.
+                rows = tx.connection.execute(
+                    "SELECT generation FROM executions WHERE actor_id=? AND process_identity_json=? LIMIT 2",
+                    (context.actor_id, canonical_json(proof)),
+                ).fetchall()
+                if len(rows) == 1:
+                    generation = rows[0]["generation"]
     if run is not None:
         run = bounded_text(run, "native_run_id", 1024)
         if event in {"start", "child_start"}:

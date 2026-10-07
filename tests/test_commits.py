@@ -1268,10 +1268,9 @@ def test_stopped_handoff_holder_times_out_before_effect_without_unlocking_owner(
         assert (
             result["error"]["code"] == "SERVICE_BUSY" and result["error"]["retryable"]
         )
-        assert result["error"]["details"] == {
-            "phase": "handoff_wait",
-            "effect_started": False,
-        }
+        details = result["error"]["details"]
+        assert details["phase"] == "handoff_wait" and details["effect_started"] is False
+        assert details["publication"] == "not_published"
         with (
             (root / ".git" / "agentcoord-commit.lock").open("a") as probe,
             pytest.raises(BlockingIOError),
@@ -1386,3 +1385,39 @@ def test_waiting_handoff_exits_on_exact_authority_or_cancellation_change(
             ).fetchone()[0]
             is None
         )
+
+
+def test_commit_failure_receipt_has_safe_phase_and_private_detail(native_service, monkeypatch):
+    service, _ = native_service
+    accepted = enqueue_commit(native_service)
+    secret = 'sensitive-hook-argument-should-not-appear-in-receipt'
+    def fail(*args, **kwargs):
+        raise ValueError(secret)
+    monkeypatch.setattr(commits, '_execute_git', fail)
+    result = service.run_operation(accepted['operation_id'])
+    assert result['state'] == 'failed' and not result['result']['committed']
+    assert secret not in json.dumps(result)
+    detail = result['error']['details']
+    assert detail['publication'] == 'not_published' and detail['phase']
+    assert detail['category'] == 'validation' and detail['operation_id'] == accepted['operation_id']
+    log = Path(detail['diagnostic_log'])
+    assert secret in log.read_text() and log.stat().st_mode & 0o777 == 0o600
+    assert log.parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_hook_rejection_is_distinct_from_uncertain_publication(native_service):
+    service, _ = native_service
+    root = service.workspace.root
+    hooks = root / '.git/hooks'
+    hooks.mkdir(exist_ok=True)
+    git(root, 'config', 'core.hooksPath', str(hooks))
+    hook = hooks / 'pre-commit'
+    hook.write_text('#!/bin/sh\nexit 7\n')
+    hook.chmod(0o700)
+    head = git(root, 'rev-parse', 'HEAD')
+    result = service.run_operation(enqueue_commit(native_service)['operation_id'])
+    assert result['state'] == 'failed' and result['error']['code'] == 'GIT_HOOK_FAILED'
+    assert result['error']['details']['hook'] == 'pre-commit'
+    assert result['error']['details']['exit_code'] == 7
+    assert result['error']['details']['publication'] == 'not_published'
+    assert git(root, 'rev-parse', 'HEAD') == head

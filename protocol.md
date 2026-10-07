@@ -31,7 +31,10 @@ At a natural work boundary, `sync` presents a bounded pending action view. Read
 full message or decision content by ID when its preview is insufficient. Explicit
 message consumption records handling. Decision resolution records an answer,
 decline or requester cancellation. Readiness acceptance records a reviewed
-dependency. These transitions are separate; a read never performs them.
+dependency. These transitions are separate; a read never performs them. After acting on a
+message, consume its ID (or batch the handled IDs) so it leaves pending views.
+Do not consume a previewed message that still needs action; consumption never
+answers a tracked decision.
 
 Message bodies use explicit UTF-8 byte chunks. Message details include a bounded
 attachment summary; `attachments MESSAGE_ID` traverses the complete attachment
@@ -93,7 +96,12 @@ authority reconciliation.
 
 Publish readiness only after preparing its complete counterpart scope. Receipts
 bind producer generation, exact paths, hashes and opaque evidence references.
-Supersede or withdraw obsolete receipts. Consumers inspect and accept the latest
+Supersede or withdraw obsolete receipts. When a shared producer change alters a
+known consumer's next action, publish one settlement handoff naming the changed
+contract, complete counterparts, preserved invariant, source/check receipt and
+remaining consumer work. Use existing readiness and its directed notification
+when applicable, rather than duplicating activity, intent and message records.
+Routine independent changes need no handoff. Consumers inspect and accept the latest
 complete receipt; unrelated commits do not invalidate unchanged inputs. Evidence
 references remain data and are never executed by the service.
 
@@ -103,7 +111,10 @@ Bindings use actual harness session and child identity. Reconnect preserves acto
 and task identity. Task assignment, connection and native execution generations
 are separate values. A shared MCP connection represents one caller; independent
 children require their own native binding. Display labels and active panes do
-not select authority.
+not select authority. A process-only shared MCP connection may resolve a proven
+canonical parent only when every matching actor belongs to that one native
+session. It remains group attribution, never proof of an independently calling
+child. Independent child attribution requires its actual child context.
 
 `identity` returns its `workspace_id` and independently bound actor. Delayed
 operations may pass global `--origin-context` with exactly `workspace_id`,
@@ -117,7 +128,12 @@ calls retain their current binding behavior.
 Lifecycle events observe native presence. Events lacking originating execution
 correlation remain uncertain observations and cannot release protected execution,
 complete work or authorize resume. Reported task state, observed presence and age
-remain separate in operator views. Agents send no heartbeat messages and ordinary
+remain separate in operator views. Originating hook process evidence can identify
+one registered execution; multiple executions sharing that evidence remain
+ambiguous. A normal turn stop/failure does not end the session execution; a
+correlated session end or child stop does. Shared parent process presence alone
+leaves child presence unknown; a correlated child termination proves that child
+execution ended. Agents send no heartbeat messages and ordinary
 commands need no coordination hooks.
 
 Lifecycle hook payloads require an absolute `cwd`, `workspace_root` or
@@ -139,7 +155,10 @@ Git execution selects exact paths or a reviewed patch and full base. Disjoint
 preparation proceeds concurrently; the final shared Git update is serialized.
 Unrelated staging and peer hunks are preserved. A published commit remains
 published even when a later notification or cleanup fails. Inspect its receipt
-before another attempt. Commits do not submit or await tests.
+before another attempt. Commit failures expose safe categories, the execution
+phase and publication state. Arbitrary exception prose stays in a private local
+diagnostic referenced by the receipt; hook output stays in service stderr.
+Reconcile uncertain publication before retrying. Commits do not submit or await tests.
 
 Coordination outages do not veto independent edits, checks or authorized commits.
 An adapter-only failure can use the installed CLI. An unreachable service stops
@@ -159,7 +178,8 @@ cannot be done in this session, continue independent work and the owned-file Git
 outage procedure. Record the binding limitation once; do not start a diagnosis
 loop or refuse safe work because it cannot be messaged.
 
-Repeated identical ambiguous lifecycle observations retain their first event and
+Repeated identical ambiguous lifecycle observations within the same execution
+retain their first event, including when other diagnostics interleave, and
 remain uncertain. They cannot complete work, release grants or prove absence.
 Verified offline sessions with no bindings, unsettled operations, protected commit
 grants or pending scheduled jobs leave current-scope indexes. Retirement does not
@@ -180,7 +200,9 @@ project configuration and marked instruction snippets, installs the shared
 MCP/lifecycle configuration. `--harnesses` selects Claude, Codex, Cursor and Grok,
 with all selected by default. Existing user content and unrelated tools/hooks
 are preserved; installer-owned resources changed by the user are refused rather
-than overwritten. Equivalent already configured native lifecycle handlers may
+than overwritten. The resource manifest records the package release and refuses
+instruction downgrades; older hash-only manifests upgrade during apply. Older
+installers cannot rewrite the new manifest format. Equivalent already configured native lifecycle handlers may
 be reused to avoid duplicate observations. Installation does not start a service
 or authorize native resume scheduling.
 

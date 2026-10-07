@@ -40,7 +40,8 @@ applies, edit and verify silently.
   actor never authorizes overwriting, transfers authority or resolves a request.
 - At natural work boundaries, handle returned action digests or use `sync`.
   Read full content when needed. Message handling, decision resolution and
-  readiness acceptance are separate explicit transitions. Do not poll an inbox,
+  readiness acceptance are separate explicit transitions. Consume selected messages
+  after acting, not just reading; use one batch for a handled set. Do not poll an inbox,
   send heartbeats or wrap reads and ordinary commands in coordination calls.
 - Publish complete artifact counterparts with `ready` or `handoff` and useful
   evidence. Consumers inspect current hash-bound readiness before accepting an

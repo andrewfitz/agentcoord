@@ -18,6 +18,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from .core import CoordinationError, Operation
+from .store import private_directory
 
 # Admission waits tolerate the measured short native handoff, but a stopped
 # holder cannot retain a slow worker forever. This bound never expires a grant.
@@ -809,6 +810,20 @@ class _Control:
             self.fault(phase)
 
 
+def _failure_diagnostic(service, operation, error):
+    """Keep arbitrary exception prose out of API receipts, in a private log."""
+    directory = service.store.path.parent / "commit-errors"
+    path = directory / (operation["id"] + ".log")
+    try:
+        private_directory(directory)
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write((type(error).__name__ + ": " + str(error))[:16000].encode("utf-8", errors="replace"))
+    except (OSError, CoordinationError):
+        return None
+    return str(path)
+
+
 def execute_operation(
     service, operation_record: dict, *, fault: Callable | None = None
 ) -> dict:
@@ -860,11 +875,19 @@ def execute_operation(
             and error.code == "SERVICE_BUSY"
             and error.retryable,
         }
+        failure["details"] = {"category": "git_command" if isinstance(error.__cause__, subprocess.CalledProcessError)
+                              else "os_error" if isinstance(error, OSError)
+                              else "coordination" if isinstance(error, CoordinationError) else "validation",
+                              "operation_id": operation["id"]}
+        diagnostic = _failure_diagnostic(service, operation, error)
+        if diagnostic:
+            failure["details"]["diagnostic_log"] = diagnostic
+        failure["next_action"] = "Inspect the private diagnostic and correct the cause before retrying."
         if failure["retryable"]:
             failure.update(
-                details={"phase": "handoff_wait", "effect_started": False},
                 next_action=error.next_action,
             )
+            failure["details"].update(phase="handoff_wait", effect_started=False)
     with service.store.write() as tx:
         row = tx.connection.execute(
             "SELECT prepared_json FROM commit_execution WHERE operation_id=?",
@@ -877,6 +900,19 @@ def execute_operation(
             (_json(prepared), operation["id"]),
         )
         uncertain = prepared.get("phase") in ("publishing", "published")
+        if result and not result.get("committed") and result.get("hook"):
+            failure = {"code": "GIT_HOOK_FAILED", "message": "Git commit hook rejected the commit",
+                       "retryable": False, "next_action": result["next_action"],
+                       "details": {"category": "hook", "hook": result["hook"], "exit_code": result["code"],
+                                   "operation_id": operation["id"], "diagnostic_stream": "service_stderr"}}
+            log = service.store.path.parent / "logs" / "stderr.log"
+            if log.is_file():
+                failure["details"]["diagnostic_log"] = str(log)
+        if failure:
+            failure["details"].update(phase=failure["details"].get("phase", prepared.get("phase", "selection")),
+                                      publication="published" if prepared.get("published_commit") else "uncertain" if uncertain else "not_published")
+            if uncertain:
+                failure["next_action"] = "Reconcile this operation before any further commit attempt."
         state = (
             "uncertain"
             if uncertain
@@ -1608,6 +1644,7 @@ def _execute_git(
                         if hook_code:
                             return {
                                 "code": hook_code,
+                                "hook": hook,
                                 "committed": False,
                                 "grant_id": grant_id,
                                 "next_action": "Review Git hook failure; shared staging and working files were preserved.",
