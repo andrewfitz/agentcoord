@@ -361,11 +361,13 @@ For an existing installation from the old `local/agentcoord` tap, migrate once:
 
 ```sh
 brew tap andrewfitz/agentcoord https://github.com/andrewfitz/agentcoord.git
+brew untap --force local/agentcoord
 brew reinstall andrewfitz/agentcoord/agentcoord
-brew untap local/agentcoord
 ```
 
-This changes the package's tap without deleting workspace databases or settings.
+Untapping removes the old formula directory, not the installed package. Remove
+it before reinstalling so Homebrew's linkage check sees only one Agentcoord
+formula. Workspace databases and settings are preserved.
 Initialization refuses to downgrade managed instructions. Hash-only installation
 manifests upgrade on apply; older installers refuse the new manifest format.
 
