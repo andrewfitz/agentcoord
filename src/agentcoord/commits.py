@@ -73,9 +73,9 @@ def _fields(
 
 
 def _paths(values: object) -> list[str]:
-    if not isinstance(values, list) or not values or len(values) > 10000:
+    if not isinstance(values, list) or not values:
         raise _error(
-            "INVALID_ARGUMENT", "Declare a nonempty bounded list of exact files"
+            "INVALID_ARGUMENT", "Declare a nonempty list of exact files"
         )
     result = []
     for value in values:
@@ -83,6 +83,8 @@ def _paths(values: object) -> list[str]:
             raise _error(
                 "INVALID_ARGUMENT", "Commit paths must be workspace-relative segments"
             )
+        if len(value.encode("utf-8")) > 4096:
+            raise _error("INVALID_ARGUMENT", "Commit paths exceed the 4096-byte limit")
         path = PurePosixPath(value)
         if (
             path.is_absolute()

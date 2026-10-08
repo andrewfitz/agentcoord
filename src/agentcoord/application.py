@@ -25,6 +25,7 @@ from . import (
     operator,
     pending,
     readiness,
+    storage,
     transport,
     wake,
     work,
@@ -295,9 +296,11 @@ class _Runtime:
         self.owner = identity.process_identity(os.getpid())
         self.thread = threading.Thread(target=self.run, name="agentcoord-maintenance", daemon=True)
         self.error = None
+        self.storage_error = None
+        self.storage_maintenance = None
 
     def run(self):
-        after, next_presence = "", 0.0
+        after, next_presence, next_storage = "", 0.0, 0.0
         while not self.stop.is_set():
             try:
                 with self.service.store.read() as tx:
@@ -337,6 +340,16 @@ class _Runtime:
                     if time.monotonic() >= next_presence:
                         after = _presence_batch(self.service, after)
                         next_presence = time.monotonic() + 5
+                    if self.storage_error is None and time.monotonic() >= next_storage:
+                        try:
+                            self.storage_maintenance = storage.maintain(self.service.store)
+                        except Exception as error:  # noqa: BLE001 — disable failed storage work until restart.
+                            self.storage_error = {
+                                "code": getattr(error, "code", "STORAGE_MAINTENANCE_FAILED"),
+                                "type": type(error).__name__,
+                            }
+                            _LOG.exception("Storage maintenance stopped; inspect before restarting")
+                        next_storage = time.monotonic() + 60
                 self.error = None
             except Exception as error:  # noqa: BLE001 — retain unexpected maintenance failures in health and logs.
                 # Health exposes failure; do not turn a broken scheduler into a healthy idle service.
@@ -383,6 +396,8 @@ def make_server(service):
             "running_effects": counts.get("running", 0) + manual,
             "uncertain_effects": counts.get("uncertain", 0),
             "maintenance_error": runtime.error if runtime else None,
+            "storage": service.store.storage_status(),
+            "storage_maintenance_error": runtime.storage_error if runtime else None,
         }
 
     def restore_activation():

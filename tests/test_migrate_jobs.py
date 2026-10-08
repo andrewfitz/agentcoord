@@ -19,6 +19,7 @@ from agentcoord import (
     messages,
     migrate,
     readiness,
+    storage_codec,
     work,
 )
 from agentcoord.config import Config
@@ -77,7 +78,7 @@ def test_pending_legacy_reminder_delivers_original_body_after_native_rebind(lega
         job = dict(tx.connection.execute("SELECT * FROM jobs").fetchone())
         assert job["delivery_deadline_us"] == round(deadline * 1_000_000)
         retained = tx.connection.execute("SELECT source_json FROM import_records WHERE source_kind='jobs'").fetchone()
-        assert json.loads(json.loads(retained[0])["payload"]) == {
+        assert json.loads(json.loads(storage_codec.decode(retained[0]))["payload"]) == {
             "body": "Remember the original note", "delivery_deadline": deadline,
         }
     with destination.write(maintenance=True) as tx:

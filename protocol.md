@@ -153,6 +153,9 @@ acceptance does not guarantee presentation, handling or native process execution
 
 Git execution selects exact paths or a reviewed patch and full base. Disjoint
 preparation proceeds concurrently; the final shared Git update is serialized.
+Commit selection has no file-count quota. Each path remains bounded and the
+request must fit the configured transport frame; message/list pagination bounds
+do not limit commits.
 Unrelated staging and peer hunks are preserved. A published commit remains
 published even when a later notification or cleanup fails. Inspect its receipt
 before another attempt. Commit failures expose safe categories, the execution
@@ -181,6 +184,12 @@ loop or refuse safe work because it cannot be messaged.
 Repeated identical ambiguous lifecycle observations within the same execution
 retain their first event, including when other diagnostics interleave, and
 remain uncertain. They cannot complete work, release grants or prove absence.
+Storage maintenance preserves messages, decisions, receipts, idempotency and Git
+recovery. Completed import archives may use lossless tagged compression; content
+hashes remain over decoded UTF-8. Only expired ignored-generation diagnostics for
+archived actors without unsettled operations are eligible for pruning. The
+configurable storage budget is a soft target, reported with physical SQLite/WAL
+usage; exceeding it never grants deletion or overwrite authority.
 Verified offline sessions with no bindings, unsettled operations, protected commit
 grants or pending scheduled jobs leave current-scope indexes. Retirement does not
 complete their tasks or grant overwrite/resume authority; history and pending

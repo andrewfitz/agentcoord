@@ -115,6 +115,7 @@ class Store:
         if self.path.is_symlink():
             raise CoordinationError("INVALID_ARGUMENT", "Database must not be a symlink")
         config = config or Config()
+        self.config = config
         # Every admitted socket can bind, mutate or unbind once at a time.
         # Slow workers, the runtime sweep and lifecycle caller also write, so
         # connection teardown must fit independently of routine queue depth.
@@ -223,6 +224,9 @@ class Store:
         signature = hashlib.sha256(canonical_json(statements).encode()).hexdigest()
         db = self._connect(initializing=True)
         try:
+            # New authorities reclaim pages incrementally; existing layouts need offline VACUUM.
+            if db.execute("PRAGMA user_version").fetchone()[0] == 0:
+                db.execute("PRAGMA auto_vacuum=INCREMENTAL")
             if db.execute("PRAGMA journal_mode=WAL").fetchone()[0] != "wal":
                 raise CoordinationError("STORAGE_UNAVAILABLE", "Database cannot enable WAL")
             db.execute("BEGIN IMMEDIATE")
@@ -302,6 +306,47 @@ class Store:
                 raise
             finally:
                 if not retained:
+                    db.close()
+
+    def storage_status(self) -> dict:
+        """Report physical authority files, including WAL; the budget is deliberately soft."""
+        sizes = {}
+        for name, path in (("database_bytes", self.path),
+                           ("wal_bytes", Path(str(self.path) + "-wal")),
+                           ("shared_memory_bytes", Path(str(self.path) + "-shm"))):
+            try:
+                info = path.lstat()
+            except FileNotFoundError:
+                sizes[name] = 0
+                continue
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid():
+                raise CoordinationError("NOT_AUTHORIZED", "Storage files must be local-user regular files")
+            sizes[name] = info.st_size
+        total = sum(sizes.values())
+        return {**sizes, "total_bytes": total, "budget_bytes": self.config.storage_budget_bytes,
+                "budget_kind": "soft", "over_budget": total > self.config.storage_budget_bytes,
+                "guidance": ("Durable authority is preserved. Back up and inspect retained data; "
+                             "increase storage.budget_bytes or use explicit offline archival. "
+                             "Long-lived readers can retain WAL pages."
+                             if total > self.config.storage_budget_bytes else None)}
+
+    def reclaim_storage(self) -> dict:
+        """Nonblocking WAL checkpoint and bounded page reclamation under writer admission."""
+        if self._writer_pid is not None and self._writer_pid != os.getpid():
+            raise CoordinationError("AUTHORITY_FENCED", "Writer lifespan belongs to another process")
+        with self._writer.enter() as deadline:
+            db, retained = self._write_connection(deadline)
+            previous_timeout = db.execute("PRAGMA busy_timeout").fetchone()[0]
+            try:
+                db.execute("PRAGMA busy_timeout=0")
+                checkpoint = tuple(db.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone())
+                db.execute("PRAGMA incremental_vacuum(128)").fetchall()
+                return {"checkpoint_busy": checkpoint[0], "wal_pages": checkpoint[1],
+                        "checkpointed_pages": checkpoint[2]}
+            finally:
+                if retained:
+                    db.execute(f"PRAGMA busy_timeout={previous_timeout}")
+                else:
                     db.close()
 
     def backup(self, destination: Path) -> dict:

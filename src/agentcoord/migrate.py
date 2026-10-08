@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from . import storage_codec
+
 SCHEMA = (
     """CREATE TABLE import_runs (
         id TEXT PRIMARY KEY, source_manifest_sha256 TEXT NOT NULL,
@@ -994,8 +996,8 @@ def _write_batch(store: Any, prepared: PreparedImport, run_id: str, start: int, 
             destinations_json = canonical_json([{"table": row.table, "identity": row.identity,
                                                   "values": row.values} for row in record.destinations])
             connection.execute("INSERT INTO import_records VALUES (?,?,?,?,?,?,?,?,?,?)", (
-                source.destination_id, *reference, canonical_json(source.data), source.source_sha256,
-                record.canonical_sha256, destinations_json, run_id))
+                source.destination_id, *reference, storage_codec.encode(canonical_json(source.data)), source.source_sha256,
+                record.canonical_sha256, storage_codec.encode(destinations_json), run_id))
             # Every fact has one provenance receipt, even when a retired mechanism has no live destination.
             destination_kind = record.destinations[0].table if record.destinations else "import_records"
             destination_id = str(record.destinations[0].identity.get("id") or
@@ -1064,7 +1066,12 @@ def verify_import(store: Any, manifest: SourceManifest) -> dict[str, Any]:
                     raise MigrationError("MISSING_PROVENANCE", "An expected source record has no complete mapping")
                 if facts["source_sha256"] != source.source_sha256 or provenance["source_sha256"] != source.source_sha256:
                     raise MigrationError("SOURCE_HASH_MISMATCH", "Imported source hash differs from the retained source")
-                content = {"source": _json(facts["source_json"]), "destinations": [
+                archived_destinations = _json(storage_codec.decode(facts["destinations_json"]))
+                expected_destinations = [{"table": row.table, "identity": row.identity,
+                                          "values": row.values} for row in record.destinations]
+                if canonical_json(archived_destinations) != canonical_json(expected_destinations):
+                    raise MigrationError("CANONICAL_HASH_MISMATCH", "Retained destination archive differs from canonical preparation")
+                content = {"source": _json(storage_codec.decode(facts["source_json"])), "destinations": [
                     _destination_snapshot(connection, row) for row in record.destinations]}
                 if (_sha(content) != record.canonical_sha256 or facts["canonical_sha256"] != record.canonical_sha256
                         or provenance["canonical_sha256"] != record.canonical_sha256):

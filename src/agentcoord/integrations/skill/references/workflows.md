@@ -309,6 +309,8 @@ and uncertain effects fail explicitly; do not bypass them by killing sessions.
 lock. Restore refuses to overwrite retained records. Review a migration manifest,
 retain the import run ID across retries, verify all mapped records/relationships
 and explicitly activate only after verification. Service removal retains history.
+After a backup-only removal, use `service install --apply`, then `service activate`
+and `doctor --live`; installation alone does not clear the durable drain fence.
 
 For any uncertain mutation, retain the actor-scoped retry key and exact payload.
 Use `receipt`/`operation get`; retrying the same key and payload recovers the

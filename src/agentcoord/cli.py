@@ -780,7 +780,7 @@ CATALOG = (
         "commit_execute",
         "Commit exact owned paths or a reviewed patch through a private index.",
         {
-            "paths": PATHS,
+            "paths": {"type": "array", "items": {**TEXT, "maxLength": 4096}, "minItems": 1},
             "message": TEXT,
             "bump_version": BOOL,
             "adopt_staged": BOOL,
@@ -999,7 +999,9 @@ def _validate_value(schema, value, name):
     elif kind == "array":
         invalid = not isinstance(value, list)
         if not invalid:
-            invalid = not schema.get("minItems", 0) <= len(value) <= schema.get("maxItems", 262144)
+            invalid = len(value) < schema.get("minItems", 0)
+            if "maxItems" in schema:
+                invalid |= len(value) > schema["maxItems"]
             if schema.get("uniqueItems"):
                 invalid |= len({json.dumps(item, sort_keys=True) for item in value}) != len(value)
             for index, item in enumerate(value):
@@ -1378,7 +1380,7 @@ def _maintenance(args, workspace):
                     Path.home(),
                     "agentcoord",
                     apply=args.apply,
-                    restart=True,
+                    restart=args.apply,
                     client=client,
                 )
             function = (

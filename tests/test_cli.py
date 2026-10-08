@@ -493,3 +493,44 @@ def test_origin_context_invalid_snapshot_fails_before_binding(originating_servic
                    "commit", "acquire"], client_factory=forbidden_client)
     reply = json.loads(capsys.readouterr().out)
     assert status == 1 and reply["error"]["code"] == "INVALID_ARGUMENT", reply
+
+
+def test_commit_path_contract_has_no_file_count_limit():
+    spec = BY_TOOL["commit_execute"]
+    assert "maxItems" not in spec.schema()["properties"]["paths"]
+    paths = [f"owned/{index}.txt" for index in range(10001)]
+    validate_arguments(spec, {"paths": paths, "message": "large exact selection"})
+
+
+def test_wake_configuration_contract_uses_enabled_only():
+    spec = BY_TOOL["wake_configure"]
+    validate_arguments(spec, {"enabled": True})
+    with pytest.raises(CoordinationError, match="Unknown command fields"):
+        validate_arguments(spec, {"wake_enabled": True})
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_service_upgrade_previews_until_explicit_application(monkeypatch, tmp_path, apply):
+    from agentcoord import cli, install
+
+    calls = []
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    def install_service(workspace, home, executable, *, apply, restart, client):
+        assert not restart or apply, "Restart requires explicit application"
+        calls.append((apply, restart, client))
+        return {"applied": apply, "changed": True}
+
+    monkeypatch.setattr(cli, "Client", Client)
+    monkeypatch.setattr(install, "install_service", install_service)
+    args = parser().parse_args(["service", "upgrade", *(["--apply"] if apply else [])])
+    workspace = SimpleNamespace(socket_path=tmp_path / "service.sock", id=MESSAGE_ID)
+    assert cli._maintenance(args, workspace) == {"applied": apply, "changed": True}
+    assert calls[0][:2] == (apply, apply)
+    assert calls[0][2].closed

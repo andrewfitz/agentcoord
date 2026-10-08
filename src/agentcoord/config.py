@@ -61,6 +61,9 @@ class Config:
     wake_sockets: dict[str, str] = field(default_factory=dict)
     wake_enabled: bool = True
     jobs_log_max_bytes: int = 262144
+    storage_budget_bytes: int = 512 * 1024 * 1024
+    storage_diagnostic_retention_days: int = 30
+    storage_maintenance_batch: int = 500
 
 
 def native_environment(environ=None) -> dict[str, str]:
@@ -223,7 +226,7 @@ def load_config(workspace: Workspace) -> Config:
             data = tomllib.loads(raw.decode("utf-8"))
     except (OSError, ValueError, UnicodeError) as error:
         raise CoordinationError("INVALID_ARGUMENT", "Configuration is invalid TOML") from error
-    validate_fields(data, {"version", "limits", "native"})
+    validate_fields(data, {"version", "limits", "native", "storage"})
     values = {}
     limits = data.get("limits", {})
     validate_fields(limits, {"fast_workers", "fast_queue", "slow_workers", "slow_queue", "frame_bytes", "action_bytes", "jobs_log_max_bytes"})
@@ -231,6 +234,13 @@ def load_config(workspace: Workspace) -> Config:
         minimum, maximum = ((4096, 16777216) if name == "jobs_log_max_bytes" else (4096, 262144) if name == "frame_bytes" else
                             (1024, 8192) if name == "action_bytes" else (1, 4096))
         values[name] = integer(value, name, minimum, maximum)
+    storage = data.get("storage", {})
+    validate_fields(storage, {"budget_bytes", "diagnostic_retention_days", "maintenance_batch"})
+    for name, value in storage.items():
+        minimum, maximum = {"budget_bytes": (1024 * 1024, 2**63 - 1),
+                            "diagnostic_retention_days": (1, 36500),
+                            "maintenance_batch": (1, 5000)}[name]
+        values[f"storage_{name}"] = integer(value, f"storage.{name}", minimum, maximum)
     if data.get("version") is not None:
         rule = data["version"]
         validate_fields(rule, {"path", "match", "replacement", "increment", "validate"}, {"path", "match", "replacement"})

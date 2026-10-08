@@ -353,3 +353,27 @@ def test_attachments_verified_and_changed_reference_blocks(sources, destination,
     migrate.apply_import(destination, migrate.prepare_import(manifest, destination.workspace_id), run_id='attachments')
     attachment.write_text('changed')
     assert not migrate.verify_import(destination, manifest)['valid']
+
+
+def test_compressed_import_archives_verify_repeat_and_detect_corruption(sources, destination):
+    from agentcoord import storage_codec
+
+    exact_body = "Original unicode🙂\n" * 2000
+    with sqlite3.connect(sources[1].path) as db:
+        db.execute("UPDATE messages SET body_md=? WHERE id=1", (exact_body,))
+    manifest = migrate.inspect_sources(sources)
+    prepared = migrate.prepare_import(manifest, destination.workspace_id)
+    result = migrate.apply_import(destination, prepared, run_id="compressed")
+    assert result["state"] == "complete"
+    assert migrate.verify_import(destination, manifest)["valid"]
+    assert migrate.apply_import(destination, prepared, run_id="compressed")["state"] == "complete"
+    with destination.read() as tx:
+        row = tx.connection.execute("SELECT id,source_json,destinations_json FROM import_records WHERE source_kind='messages'").fetchone()
+        assert isinstance(row["source_json"], bytes)
+        assert isinstance(row["destinations_json"], bytes)
+        assert json.loads(storage_codec.decode(row["source_json"]))["body_md"] == exact_body
+    with destination.write(maintenance=True) as tx:
+        tx.connection.execute("UPDATE import_records SET source_json=? WHERE id=?", (row["source_json"][:-1], row["id"]))
+    verification = migrate.verify_import(destination, manifest)
+    assert not verification["valid"]
+    assert "VERIFY_ERROR" in {failure["code"] for failure in verification["failures"]}

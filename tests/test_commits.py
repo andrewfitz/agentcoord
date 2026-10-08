@@ -1421,3 +1421,35 @@ def test_hook_rejection_is_distinct_from_uncertain_publication(native_service):
     assert result['error']['details']['exit_code'] == 7
     assert result['error']['details']['publication'] == 'not_published'
     assert git(root, 'rev-parse', 'HEAD') == head
+
+
+def test_path_selection_has_no_count_cap_and_retains_byte_defense():
+    paths = [f"owned/{index}.txt" for index in range(10001)]
+    assert set(commits._paths(paths)) == set(paths)
+    from agentcoord.core import CoordinationError
+
+    with pytest.raises(CoordinationError, match="4096-byte"):
+        commits._paths(["é" * 2049])
+
+
+def test_native_large_exact_selection_preserves_peer_staging(native_service):
+    service, context = native_service
+    root = service.workspace.root
+    paths = [f"owned-{index}.txt" for index in range(151)]
+    for path in paths:
+        (root / path).write_text(f"reviewed {path}\n")
+    (root / "peer.txt").write_text("peer staging survives\n")
+    git(root, "add", "peer.txt")
+    from agentcoord.cli import BY_TOOL, validate_arguments
+
+    arguments = {"paths": paths, "message": "large native selection"}
+    validate_arguments(BY_TOOL["commit_execute"], arguments)
+    accepted = enqueue_commit(native_service, **arguments)
+    result = service.run_operation(accepted["operation_id"])
+    assert result["state"] == "succeeded", result
+    assert set(git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD").decode().splitlines()) == set(paths)
+    assert git(root, "show", "HEAD:peer.txt") == b"preserve\n"
+    assert git(root, "show", ":peer.txt") == b"peer staging survives\n"
+    assert git(root, "diff", "--cached", "--name-only") == b"peer.txt\n"
+    with service.store.read() as tx:
+        assert not commits.status(tx, context.actor_id)["held_by_you"]

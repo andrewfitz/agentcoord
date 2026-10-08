@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.11/agentcoord-0.1.11-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.12/agentcoord-0.1.12-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.11/agentcoord-0.1.11-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.12/agentcoord-0.1.12-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -325,7 +325,7 @@ copy identity capabilities between agents. Initialization safely merges the
 repository's MCP configuration; manually managed integrations must keep the same
 workspace and native harness identity.
 
-`.agentcoord.toml` accepts optional `[limits]`, `[native.executables]` and
+`.agentcoord.toml` accepts optional `[limits]`, `[native]`, `[storage]` and
 `[version]` sections. Defaults already bound queues, frames and action digests;
 start with them. For a repository with a plain version file, an optional bump
 rule looks like:
@@ -348,6 +348,38 @@ as that user. This is a local shared-checkout tool, not a network chat server.
 Stored evidence remains evidence: message delivery is not proof of successful
 tests or completed work. No automatic deletion of useful message/recovery history
 is implied by the bounded retrieval APIs.
+
+### Storage budget and maintenance
+
+The default storage budget is **512 MiB per workspace**, counting SQLite, WAL and
+shared-memory files. It is a soft target: health reports pressure, while pending
+work, messages, decisions, retry receipts and Git recovery remain durable. A hard
+disk ceiling cannot safely discard these records or prevent recovery writes.
+Configure the target and diagnostic retention in the repository:
+
+```toml
+[storage]
+budget_bytes = 536870912
+diagnostic_retention_days = 30
+maintenance_batch = 500
+```
+
+Apply configuration with the normal service upgrade/restart procedure. Inspect
+current bytes and budget pressure with `agentcoord --operator service health`.
+
+Existing daemon maintenance runs bounded storage work once per minute. It prunes
+only expired ignored-generation diagnostics for archived actors without unsettled
+operations, compresses completed import archives losslessly when beneficial, and
+checkpoints SQLite without interrupting readers. Hashes describe decoded content;
+messages retain their existing text and chunk semantics. Repeated identical
+ignored lifecycle observations are already deduplicated at their source.
+
+New databases reclaim free pages incrementally. Existing databases reuse freed
+pages; shrinking their physical file requires an explicit offline SQLite `VACUUM`
+after a verified backup. Maintenance does not perform blocking full compaction.
+Long-lived readers may retain WAL pages. Storage failure stops that maintenance
+lane and appears in health; independent work continues. No read/command logs,
+heartbeats or notification acknowledgment chains are added.
 
 ## Update, recover and remove
 
@@ -416,6 +448,17 @@ agentcoord service remove --apply
 agentcoord backup /absolute/path/to/new-backup.sqlite3
 ```
 
+After backup-only maintenance, restore and explicitly activate the managed service:
+
+```sh
+agentcoord service install --apply
+agentcoord service activate
+agentcoord doctor --live
+```
+
+Removal leaves the durable maintenance fence in place. Installation alone does
+not clear it; activation verifies that external effects are settled.
+
 Restore requires empty destination state with the matching workspace identity
 and schema, and refuses to overwrite retained records; read `restore --help` and the protocol before using it. `migrate` imports
 selected legacy sources with provenance verification and activation fencing; it
@@ -423,7 +466,7 @@ is an explicit offline migration, not a requirement for a fresh installation.
 
 `service remove --apply` removes the macOS service, retaining workspace data.
 Uninstall the executable with `pipx uninstall agentcoord` or
-`brew uninstall local/agentcoord/agentcoord`. Review and remove only Agentcoord's
+`brew uninstall andrewfitz/agentcoord/agentcoord`. Review and remove only Agentcoord's
 marked instruction blocks and MCP/lifecycle entries if removing integrations;
 preserve unrelated tools, hooks and instructions.
 
@@ -532,6 +575,10 @@ wake_enabled = false
 Repository policy controls native signals to registered live root sessions.
 A native owner can opt its current execution in with
 `agentcoord wake configure --enabled`, or out with `--no-enabled`.
+`wake_enabled` belongs only in repository configuration; it is not a commit or
+message parameter. MCP `wake_configure` uses `enabled`, and `send` uses optional
+`wake`. An old cached adapter may reject newer configuration: use the current
+installed CLI until a natural reconnect, and continue independent commits.
 Per-session consent is bound to that exact execution. Offline scheduled resume
 has separate consent; message delivery never starts another harness process,
 answers tool approvals or restarts paused/offline agents. A completed task in a
