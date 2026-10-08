@@ -296,3 +296,39 @@ def test_postpublication_error_retains_commit_and_never_repeats(workspace, monke
     assert result["receipt"] == reply["data"]["receipt"]
     assert local_commits.execute(workspace, arguments(), "postpublication-key") == reply
     assert git(workspace.root, "rev-list", "--count", "HEAD") == b"2\n"
+
+
+def test_local_hooks_receive_canonical_uuid_and_real_inherited_git_lock(workspace):
+    import sys
+    import uuid
+
+    hooks = workspace.root / ".git" / "hooks"
+    hook = hooks / "pre-commit"
+    hook.write_text(
+        f"#!{sys.executable}\n"
+        "import os, stat, uuid\n"
+        "value = os.environ['AGENTCOORD_COMMIT_GRANT_ID']\n"
+        "assert str(uuid.UUID(value)) == value\n"
+        "assert os.environ['AGENTCOORD_COMMIT_HOOK_ACTIVE'] == '1'\n"
+        "actual = os.fstat(int(os.environ['AGENTCOORD_COMMIT_LOCK_FD']))\n"
+        "expected = os.stat('.git/agentcoord-commit.lock', follow_symlinks=False)\n"
+        "assert stat.S_ISREG(actual.st_mode)\n"
+        "assert (actual.st_dev, actual.st_ino) == (expected.st_dev, expected.st_ino)\n"
+        "open('.git/local-hook-checked', 'w').write(value)\n"
+    )
+    hook.chmod(0o700)
+    # Both hook phases must pass the same inherited-descriptor checks.
+    post_hook = hooks / "post-commit"
+    post_hook.write_text(hook.read_text())
+    post_hook.chmod(0o700)
+    git(workspace.root, "config", "core.hooksPath", str(hooks))
+    reply = local_commits.execute(workspace, arguments(), "hook-compatible")
+    assert reply["ok"], reply
+    result = reply["data"]["result"]
+    assert result["post_commit_code"] == 0
+    assert str(uuid.UUID(result["grant_id"])) == result["grant_id"]
+    assert (workspace.root / ".git" / "local-hook-checked").read_text() == result["grant_id"]
+    assert result["mode"] == "local"
+    assert git(workspace.root, "show", "HEAD:owned") == b"after\n"
+    assert git(workspace.root, "show", ":peer") == b"peer staged\n"
+    assert local_commits._Control(lambda: None, "hook-compatible").grant_id == result["grant_id"]

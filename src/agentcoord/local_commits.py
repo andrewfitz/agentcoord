@@ -9,6 +9,7 @@ import sqlite3
 import stat
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 from . import commits
@@ -126,7 +127,9 @@ def _native_risk(workspace, paths, key, warn, arguments):
 
 class _Control:
     def __init__(self, check, key):
-        self.check, self.grant_id = check, "local-" + hashlib.sha256(key.encode()).hexdigest()
+        # A local control receipt is not a native actor or service grant. Hooks
+        # still use the canonical UUID format and verify the real lock descriptor.
+        self.check, self.grant_id = check, str(uuid.uuid5(uuid.NAMESPACE_URL, "agentcoord:local-commit:" + key))
 
     def reserve(self):
         self.check()
