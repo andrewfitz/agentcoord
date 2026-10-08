@@ -23,8 +23,9 @@ Evidence includes recent completed fixes after owners change tasks. Read selecte
 details when previews are marked incomplete. For missing native binding, inspect
 once and retry only after a confirmed setup change; continue independent work.
 
-For an actionable dependency or handoff needing an idle agent, use `send --wake`
-(MCP `send` with `wake: true`); Agentcoord selects the native adapter. On a wake
+Use ordinary `send` for an actionable dependency or handoff; native attention is
+automatic and Agentcoord selects the adapter. Use `--no-wake` / `wake: false`
+only for a deliberately quiet message. On a wake
 signal run one `sync` and handle relevant messages within existing authority.
 Do not poll, send courtesy replies or let unavailable delivery block independent
 work. Native activation requirements live in the shared skill workflow reference.

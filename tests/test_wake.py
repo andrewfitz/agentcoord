@@ -13,7 +13,7 @@ import pytest
 from agentcoord import identity, wake, wake_adapters
 from agentcoord.application import _recover, build_service
 from agentcoord.cli import BY_TOOL, parser
-from agentcoord.config import Config, register_workspace
+from agentcoord.config import Config, load_config, register_workspace
 from agentcoord.core import Call, CoordinationError
 from agentcoord.mcp import ChannelReceiver
 
@@ -26,7 +26,7 @@ def uid():
 def runtime(tmp_path):
     repo = tmp_path / 'repo'
     repo.mkdir()
-    service = build_service(register_workspace(repo, state_root=tmp_path/'state'), Config(wake_enabled=True))
+    service = build_service(register_workspace(repo, state_root=tmp_path/'state'))
     contexts = []
     for harness in ('codex', 'claude', 'grok'):
         proof = identity.process_identity(os.getpid())
@@ -48,7 +48,7 @@ def send(runtime, *, sender=0, recipient=1, key=None, **kwargs):
     service, contexts = runtime
     return call(service, contexts[sender], 'message.send', {'recipients': [contexts[recipient].actor_id],
         'kind': 'handoff', 'subject': 'Parser fixed', 'body': 'Preserve the intentional escape fix.',
-        'wake': True, **kwargs}, key)
+        **kwargs}, key)
 
 
 def test_common_command_and_atomic_retry_receipt(runtime):
@@ -57,6 +57,7 @@ def test_common_command_and_atomic_retry_receipt(runtime):
         '--kind', 'handoff', '--subject', 'Fix', '--body', 'Evidence', '--wake'])
     assert parsed.wake is True
     assert BY_TOOL['send'].schema()['properties']['wake']['type'] == 'boolean'
+    assert BY_TOOL['send'].schema()['properties']['wake']['default'] is True
     key = uid()
     first = send(runtime, key=key)
     assert send(runtime, key=key) == first
@@ -88,7 +89,7 @@ def test_unsent_burst_coalesces_across_senders_and_receipt_is_visible(runtime):
     assert result['error']['code'] == 'NOT_FOUND'
 
 
-def test_default_silent_send_and_recipient_opt_out(runtime):
+def test_explicit_silent_send_and_recipient_opt_out(runtime):
     service, contexts = runtime
     no_signal = send(runtime, wake=False)
     assert 'wake' not in no_signal
@@ -100,7 +101,7 @@ def test_default_silent_send_and_recipient_opt_out(runtime):
         assert not tx.connection.execute('SELECT 1 FROM operations').fetchone()
 
 
-@pytest.mark.parametrize('change', ['task', 'execution', 'paused', 'completed', 'consent', 'offline'])
+@pytest.mark.parametrize('change', ['task', 'execution', 'paused', 'consent', 'offline'])
 def test_dispatch_rechecks_recipient_before_native_effect(runtime, change):
     service, contexts = runtime
     oid = send(runtime)['wake'][0]['operation_id']
@@ -109,7 +110,7 @@ def test_dispatch_rechecks_recipient_before_native_effect(runtime, change):
             identity.assign_task(tx, contexts[1], 'new task')
         elif change == 'execution':
             identity.start_execution(tx, contexts[1], native_run_id=uid(), process_proof=identity.process_identity(os.getpid()))
-        elif change in ('paused', 'completed'):
+        elif change == 'paused':
             tx.connection.execute('UPDATE actors SET reported_state=? WHERE id=?', (change, contexts[1].actor_id))
         elif change == 'consent':
             wake._configure(service, contexts[1], {'enabled': False}, tx)
@@ -122,6 +123,71 @@ def test_dispatch_rechecks_recipient_before_native_effect(runtime, change):
     assert outcome['state'] == 'succeeded'
     assert outcome['result']['delivery'] == 'unavailable'
     assert outcome['effect_started_us'] is None
+
+
+def test_completed_task_can_receive_without_reopening_task(runtime):
+    service, contexts = runtime
+    call(service, contexts[1], 'identity.complete', {'note': 'Task finished; session remains open'})
+    oid = send(runtime)['wake'][0]['operation_id']
+    def deliver(service, operation, actor, channels, effect):
+        assert actor['reported_state'] == 'completed'
+        effect()
+        return {'delivery': 'notification_sent'}
+    service.adapters['wake_delivery'] = deliver
+    assert service.run_operation(oid)['result']['delivery'] == 'notification_sent'
+    with service.store.read() as tx:
+        assert tx.connection.execute('SELECT reported_state FROM actors WHERE id=?',
+                                     (contexts[1].actor_id,)).fetchone()[0] == 'completed'
+
+
+def test_consumed_message_and_self_send_do_not_wake(runtime):
+    service, contexts = runtime
+    message = send(runtime)
+    call(service, contexts[1], 'message.consume', {'id': message['id']})
+    service.adapters['wake_delivery'] = lambda *args: pytest.fail('No pending message should reach an adapter')
+    outcome = service.run_operation(message['wake'][0]['operation_id'])
+    assert outcome['result']['delivery'] == 'handled' and outcome['effect_started_us'] is None
+    own = send(runtime, recipient=0)
+    assert own['wake'] == [{'recipient': contexts[0].actor_id, 'delivery': 'self'}]
+
+
+def test_default_repository_policy_and_explicit_quiet_send(runtime):
+    assert Config().wake_enabled is True
+    service, contexts = runtime
+    assert load_config(service.workspace).wake_enabled is True
+    (service.workspace.root / '.agentcoord.toml').write_text('[native]\nwake_enabled = false\n')
+    service.config = load_config(service.workspace)
+    assert service.config.wake_enabled is False
+    assert send(runtime)['wake'] == [{'recipient': contexts[1].actor_id, 'delivery': 'disabled'}]
+    parsed = parser().parse_args(['send', '--recipients', contexts[1].actor_id,
+        '--kind', 'handoff', '--subject', 'Fix', '--body', 'Evidence', '--no-wake'])
+    assert parsed.wake is False
+    assert 'wake' not in send(runtime, wake=False)
+
+
+def test_handling_during_adapter_inspection_prevents_native_effect(runtime):
+    service, contexts = runtime
+    message = send(runtime)
+    def deliver(service, operation, actor, channels, effect):
+        call(service, contexts[1], 'message.consume', {'id': message['id']})
+        effect()
+        pytest.fail('Already handled messages must not produce a native signal')
+    service.adapters['wake_delivery'] = deliver
+    outcome = service.run_operation(message['wake'][0]['operation_id'])
+    assert outcome['result']['delivery'] == 'handled' and outcome['effect_started_us'] is None
+
+
+def test_execution_opt_out_expires_but_explicit_pause_remains_inhibited(runtime):
+    service, contexts = runtime
+    call(service, contexts[1], 'wake.configure', {'enabled': False})
+    assert send(runtime)['wake'][0]['delivery'] == 'disabled'
+    with service.store.write() as tx:
+        identity.start_execution(tx, contexts[1], native_run_id=uid(), process_proof=identity.process_identity(os.getpid()))
+    assert 'operation_id' in send(runtime)['wake'][0]
+    with service.store.write() as tx:
+        tx.connection.execute("UPDATE actors SET resume_inhibited=1,reported_state='completed' WHERE id=?",
+                              (contexts[1].actor_id,))
+    assert send(runtime)['wake'][0]['delivery'] == 'paused'
 
 
 def test_sender_can_finish_without_cancelling_an_accepted_signal(runtime):
@@ -254,7 +320,9 @@ def test_native_socket_permissions_and_symlinks(short_socket_dir):
             wake_adapters.private_socket(path)
 
 
-def test_codex_uses_loaded_native_queue_and_does_not_start_busy(runtime, monkeypatch):
+@pytest.mark.parametrize('native_status,delivery', [('idle', 'turn_started'), ('active', 'native_queued'),
+                                                  ('unknown', 'unavailable')])
+def test_codex_detects_native_idle_and_never_starts_busy_or_unknown(runtime, monkeypatch, native_status, delivery):
     service, contexts = runtime
     requests = []
     with service.store.read() as tx:
@@ -265,17 +333,26 @@ def test_codex_uses_loaded_native_queue_and_does_not_start_busy(runtime, monkeyp
         def call(self, method, params):
             requests.append((method, params))
             return {'thread/loaded/list': {'data': [actor['native_session_id']]},
-                'thread/read': {'thread': {'id': actor['native_session_id'], 'cwd': str(service.workspace.root), 'status': {'type': 'active'}}},
-                'thread/queue/add': {'queuedSubmission': {'id': 'native-id'}}}[method]
+                'thread/read': {'thread': {'id': actor['native_session_id'], 'cwd': str(service.workspace.root), 'status': {'type': native_status}}},
+                'thread/queue/add': {'queuedSubmission': {'id': 'native-id'}},
+                'thread/queue/start': {'turn': {'id': 'native-turn'}}}[method]
         def close(self):
             pass
     monkeypatch.setattr(wake_adapters, 'CodexRPC', RPC)
     effect = []
     result = wake_adapters.codex(service, {'id': uid()}, actor, [], lambda: effect.append(True))
-    assert result['delivery'] == 'native_queued' and effect == [True]
-    assert [r[0] for r in requests] == ['thread/loaded/list', 'thread/read', 'thread/queue/add']
-    assert requests[-1][1]['clientUserMessageId'].startswith('agentcoord:')
-    assert requests[-1][1]['input'][0]['text'].startswith('Agentcoord has pending')
+    assert result['delivery'] == delivery
+    expected = ['thread/loaded/list', 'thread/read']
+    if native_status != 'unknown':
+        expected.append('thread/queue/add')
+        if native_status == 'idle':
+            expected.append('thread/queue/start')
+        assert effect == [True]
+        assert requests[2][1]['clientUserMessageId'].startswith('agentcoord:')
+        assert requests[2][1]['input'][0]['text'].startswith('Agentcoord has pending')
+    else:
+        assert effect == []
+    assert [r[0] for r in requests] == expected
 
 
 def test_uncertain_reconciliation_requires_explicit_handling(runtime):
@@ -365,7 +442,7 @@ def test_assembled_daemon_delivers_to_real_mcp_receiver(runtime):
                             await receiver.start()
                             reply = await anyio.to_thread.run_sync(lambda: sender.call('message.send', {
                                 'recipients': [contexts[1].actor_id], 'kind': 'handoff',
-                                'subject': 'Fix is ready', 'body': 'Preserve peer edits.', 'wake': True}, key=uid()))
+                                'subject': 'Fix is ready', 'body': 'Preserve peer edits.'}, key=uid()))
                             assert reply['ok'], reply
                             oid = reply['data']['wake'][0]['operation_id']
                             with anyio.fail_after(5):

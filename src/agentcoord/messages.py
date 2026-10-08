@@ -369,12 +369,12 @@ def _send(service, context, args, tx):
     fields(args, {"recipients", "kind", "subject", "body", "thread", "paths", "context", "requested_ack", "wake"},
            {"recipients", "kind", "subject", "body"})
     service.require_actor(tx, context)
-    if type(args.get("wake", False)) is not bool:
+    if type(args.get("wake", True)) is not bool:
         _error("wake must be boolean")
     result = append_message(tx, context, recipient_ids=args["recipients"], kind=args["kind"], subject=args["subject"],
                           body=args["body"], thread=args.get("thread", ""), paths=args.get("paths", ()),
                           declared_context=args.get("context"), requested_ack=args.get("requested_ack", False))
-    if args.get("wake"):
+    if args.get("wake", True):
         from .wake import enqueue
         result["wake"] = enqueue(service, context, tx, result, args["recipients"])
     return result

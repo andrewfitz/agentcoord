@@ -241,11 +241,11 @@ they do not sandbox arbitrary malicious processes owned by that same user.
 
 ## Native wake signals
 
-A directed `send --wake` requests native attention through the recipient's
+A directed `send` automatically requests native attention through the recipient's
 registered harness. The agent-facing command is identical across harnesses.
-Use it only when a concrete dependency, handoff or decision needs an idle agent's
-attention; ordinary progress stays silent. Native wake consent comes from
-`[native] wake_enabled = true` or an exact-execution `wake configure` preference.
+Send only useful dependencies, handoffs or decisions. `--no-wake` / `wake: false`
+keeps a selected message quiet. Native attention is enabled by default, controlled
+by `[native] wake_enabled` and an exact-execution `wake configure` preference.
 It does not grant new task authority or offline resume consent.
 
 The message and a coalesced unsent delivery intent are one transaction in the
@@ -254,6 +254,11 @@ short debounce. Recipient task/execution generations, pause/completion state,
 consent, process evidence and native workspace are rechecked before delivery.
 Folder scope, display labels and history never select a destination. Only live
 native targets are attached; do not load a standalone session in another process.
+Completed tasks remain completed when their live session receives a message.
+Paused, opted-out or offline sessions do not restart. Native Codex status chooses
+idle turn start versus busy queueing; Claude delegates scheduling to its Channel
+host; Grok requires an idle shared-leader owner. Unknown activity and process
+liveness alone are not proof that a new turn is safe.
 
 The signal is a fixed sync instruction and receipt ID, not executable peer prose.
 The recipient runs one `sync`, reads relevant records, handles only authorized

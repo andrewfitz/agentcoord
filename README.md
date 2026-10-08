@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.10/agentcoord-0.1.10-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.11/agentcoord-0.1.11-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.10/agentcoord-0.1.10-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.11/agentcoord-0.1.11-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -304,7 +304,7 @@ An MCP connection has a native binding. A shared parent connection cannot
 impersonate a child; independent child attribution needs its own supported native
 binding. Display labels and pane names are never authority.
 
-Messages do not wake stopped models. Reminder delivery and native resume are
+Messages do not start offline harnesses. Reminder delivery and native resume are
 separate jobs. Automatic resume is **off by default** and requires explicit user
 consent, a supported adapter, verified offline presence and unchanged authority.
 Installation does not grant that consent. Live, paused, completed and ambiguous
@@ -508,29 +508,34 @@ Use the same CLI or MCP send operation for every supported harness:
 
 ```sh
 agentcoord send --recipients RECIPIENT_UUID --kind handoff \
-  --subject 'Parser fix ready' --body 'Preserve escaped delimiters; focused tests pass.' --wake
+  --subject 'Parser fix ready' --body 'Preserve escaped delimiters; focused tests pass.'
 ```
 
-MCP: `send` with `wake: true`. Agentcoord chooses the adapter from the
+MCP: ordinary `send`. Native attention is automatic; Agentcoord chooses the adapter from the
 recipient's authenticated native identity. Senders never choose a harness,
-process, socket or session to execute. Plain sends remain silent and wait for a
-natural work boundary. Use wake for an actionable dependency or handoff that
-needs an idle agent's attention, not routine progress or courtesy replies.
+process, socket or session to execute. Codex's native status determines whether
+to start an idle turn or queue attention behind active work. Claude's native
+Channel host schedules notifications; Grok requires a reported idle shared-leader
+owner because it has no safe busy-session queue. A live process alone does not
+prove idleness. No elapsed-silence heuristic or model polling is used.
+Send only useful dependencies, decisions or handoffs; use `--no-wake` (MCP
+`wake: false`) when a message should deliberately wait for a natural work boundary.
 
-Enable wake once per repository in `.agentcoord.toml`, then apply the normal
-service upgrade/restart procedure at a safe boundary:
+Native attention is enabled by default. To disable it for a repository, configure
+`.agentcoord.toml` and apply the normal service upgrade/restart procedure:
 
 ```toml
 [native]
-wake_enabled = true
+wake_enabled = false
 ```
 
-This authorizes native signals to registered live root sessions. Alternatively,
-a native owner can opt its current execution in with
+Repository policy controls native signals to registered live root sessions.
+A native owner can opt its current execution in with
 `agentcoord wake configure --enabled`, or out with `--no-enabled`.
 Per-session consent is bound to that exact execution. Offline scheduled resume
-has separate consent; `--wake` never starts another harness process for an
-existing session, answers tool approvals, or restarts paused/completed agents.
+has separate consent; message delivery never starts another harness process,
+answers tool approvals or restarts paused/offline agents. A completed task in a
+still-open session can receive messages without reopening or reassigning its task.
 
 | Recipient | Native route and activation |
 | --- | --- |
@@ -562,6 +567,8 @@ prove message handling; `handled_messages` counts explicit recipient consumption
 
 Messages and wake intents commit atomically in the existing database. Unsent
 bursts coalesce for the same recipient task/execution over a short debounce.
+Self-messages do not wake their sender. Messages already handled before dispatch
+do not start an empty turn.
 Dispatch checks consent, generations, live process evidence and repository again.
 Signals contain a fixed instruction to sync plus a receipt ID; peer message bodies
 remain data retrieved through tools. No terminal input, extra supervisor, model

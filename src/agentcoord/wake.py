@@ -22,10 +22,9 @@ SCHEMA = ()
 def enabled(actor, default=False):
     metadata = json.loads(actor['metadata_json'])
     consent = metadata.get('wake', {})
-    if not consent:
+    if not consent or consent.get('execution_generation') != actor['current_execution_generation']:
         return default and bool(actor['current_execution_generation'])
-    return (consent.get('enabled') is True
-            and consent.get('execution_generation') == actor['current_execution_generation'])
+    return consent.get('enabled') is True
 
 
 def channel_path(workspace, binding_id):
@@ -75,11 +74,14 @@ def _channel(service, context, args, tx):
 def enqueue(service, context, tx, message, recipients):
     deliveries = []
     for recipient in recipients:
+        if recipient == context.actor_id:
+            deliveries.append({'recipient': recipient, 'delivery': 'self'})
+            continue
         actor = tx.connection.execute('SELECT * FROM actors WHERE id=?', (recipient,)).fetchone()
         if not enabled(actor, service.config.wake_enabled):
             deliveries.append({'recipient': recipient, 'delivery': 'disabled'})
             continue
-        if actor['archived'] or actor['reported_state'] in {'paused', 'completed'}:
+        if actor['archived'] or actor['reported_state'] == 'paused' or actor['resume_inhibited']:
             deliveries.append({'recipient': recipient, 'delivery': 'paused'})
             continue
         if actor['child_id'] or actor['harness'] == 'cursor':
@@ -135,7 +137,7 @@ def _get(service, context, args, tx):
 def validate_recipient(tx, operation, *, default_enabled=False):
     args = operation['arguments']
     actor = tx.connection.execute('SELECT * FROM actors WHERE id=?', (args['recipient'],)).fetchone()
-    if (not actor or actor['archived'] or actor['reported_state'] in {'paused', 'completed'}
+    if (not actor or actor['archived'] or actor['reported_state'] == 'paused' or actor['resume_inhibited']
             or actor['current_task_generation'] != args['recipient_task']
             or actor['current_execution_generation'] != args['recipient_execution']
             or not enabled(actor, default_enabled)):
@@ -176,12 +178,21 @@ def reconcile_operation(service, operation):
                 'reason': 'Uncertain native delivery requires exact handling evidence; no signal was repeated'}
 
 
+def _pending(tx, operation):
+    args = operation['arguments']
+    return tx.connection.execute('''SELECT 1 FROM recipients r JOIN messages m ON m.id=r.message_id
+        WHERE r.actor_id=? AND r.handled_us IS NULL AND m.sequence BETWEEN ? AND ? LIMIT 1''',
+        (args['recipient'], args['first_sequence'], args['through_sequence'])).fetchone() is not None
+
+
 def execute_operation(service, operation):
     from . import wake_adapters
 
     try:
         with service.store.read() as tx:
             actor, process = validate_recipient(tx, operation, default_enabled=service.config.wake_enabled)
+            if not _pending(tx, operation):
+                return {'delivery': 'handled', 'reason': 'Recipient already handled these messages'}
             channels = [dict(r) for r in tx.connection.execute('SELECT id,native_evidence_json FROM bindings WHERE actor_id=? AND revoked_us IS NULL AND transport=\'mcp\'',
                                                               (actor['id'],))]
         if process_status(process) != 'alive':
@@ -193,6 +204,8 @@ def execute_operation(service, operation):
             with service.store.write() as tx:
                 service.require_effect(tx, operation)
                 validate_recipient(tx, operation, default_enabled=service.config.wake_enabled)
+                if not _pending(tx, operation):
+                    raise CoordinationError('WAKE_HANDLED', 'Recipient handled these messages during native inspection')
                 tx.connection.execute('UPDATE operations SET effect_started_us=COALESCE(effect_started_us,?) WHERE id=? AND claim_token=?',
                                       (tx.now_us, operation['id'], operation['claim_token']))
 
@@ -203,6 +216,8 @@ def execute_operation(service, operation):
             started = tx.connection.execute('SELECT effect_started_us FROM operations WHERE id=?', (operation['id'],)).fetchone()[0]
         if started is not None:
             raise
+        if error.code == 'WAKE_HANDLED':
+            return {'delivery': 'handled', 'reason': error.message}
         return {'delivery': 'unavailable', 'reason': error.message, 'code': error.code}
 
 

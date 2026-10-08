@@ -59,7 +59,7 @@ class Config:
     action_bytes: int = 8192
     native_executables: dict[str, str] = field(default_factory=dict)
     wake_sockets: dict[str, str] = field(default_factory=dict)
-    wake_enabled: bool = False
+    wake_enabled: bool = True
     jobs_log_max_bytes: int = 262144
 
 
@@ -255,9 +255,9 @@ def load_config(workspace: Workspace) -> Config:
         values["version"] = VersionRule(normalized, match, replacement, increment, rule.get("validate"))
     native = data.get("native", {})
     validate_fields(native, {"executables", "wake_sockets", "wake_enabled"})
-    if type(native.get("wake_enabled", False)) is not bool:
+    if type(native.get("wake_enabled", True)) is not bool:
         raise CoordinationError("INVALID_ARGUMENT", "native.wake_enabled must be boolean")
-    values["wake_enabled"] = native.get("wake_enabled", False)
+    values["wake_enabled"] = native.get("wake_enabled", True)
     executables = native.get("executables", {})
     validate_fields(executables, {"claude", "codex", "cursor", "grok"})
     values["native_executables"] = {key: bounded_text(value, f"{key} executable", 4096) for key, value in executables.items()}

@@ -177,9 +177,10 @@ macOS; Linux uses `serve`. Service changes never force-kill user agent sessions.
 
 ## Native attention
 
-`send --wake` (MCP `send` with `wake: true`) requests attention through the
+Ordinary `send` automatically requests attention through the
 recipient's native harness automatically. Use it for a real actionable dependency
-or handoff needing an idle agent, not ordinary progress. Repository wake policy
+or handoff, not ordinary progress. `--no-wake` (MCP `wake: false`) keeps a selected
+message quiet. Repository wake policy
 can enable recipients without per-agent setup calls. `wake configure --enabled`
 or `--no-enabled` overrides consent for your exact native execution.
 

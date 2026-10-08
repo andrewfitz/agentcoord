@@ -258,7 +258,8 @@ CATALOG = (
             },
             "context": {"type": "object"},
             "requested_ack": {"type": "boolean"},
-            "wake": {"type": "boolean", "description": "Request native delivery to opted-in recipients; adapters are selected automatically."},
+            "wake": {"type": "boolean", "default": True,
+                     "description": "Native delivery is automatic. Set false for a quiet message; recipient policy and adapter availability still apply."},
         },
         ("recipients", "kind", "subject", "body"),
         True,
@@ -1100,6 +1101,8 @@ def parser():
             )
             if not schema and name == "evidence":
                 opts["required"] = False
+            if schema.get("description"):
+                opts["help"] = schema["description"]
             if schema.get("type") == "boolean":
                 opts["action"] = argparse.BooleanOptionalAction
             elif schema.get("type") == "integer":

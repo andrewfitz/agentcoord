@@ -253,7 +253,8 @@ checkpoint's resume preference is an explicit choice. Do not enable
 reminder and an authorized resume are different jobs. `schedule --kind resume`
 requires a supported target and verified offline execution with unchanged
 authority; paused, completed, live or ambiguous targets are not restarted.
-Messages alone do not wake a stopped model.
+Messages do not start an offline harness. Live sessions use automatic native
+attention; offline scheduled resume has separate consent.
 
 Inspect exact jobs with `job`/`jobs`. An uncertain external launch needs deliberate
 `resolve`/operation reconciliation before optional retry. Elapsed time or a lease
@@ -322,10 +323,13 @@ running as that same user.
 
 ## Wake delivery activation
 
-Senders use one `send --wake` command for every harness. With repository
-`[native] wake_enabled = true`, no extra per-agent handshake is needed. Explicit
-`wake configure` consent is current-execution only. Paused/completed/offline
-sessions do not restart; wake and scheduled offline resume are separate features.
+Senders use ordinary `send` for every harness. Native attention is automatic by
+default; no wake flag, recipient status lookup or per-agent handshake is needed.
+`--no-wake` / MCP `wake: false` keeps a selected message quiet. Repository
+`[native] wake_enabled = false` disables delivery; explicit `wake configure`
+preferences are current-execution only. Paused/offline sessions do not restart.
+Completed tasks can receive messages in their live session without reopening
+task authority. Wake and scheduled offline resume are separate features.
 
 Codex must use its existing shared app-server daemon with the target thread
 loaded in this repository. Claude's Agentcoord MCP advertises a Channel; launch
