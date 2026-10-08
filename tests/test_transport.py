@@ -153,6 +153,8 @@ def test_timeout_retains_retry_identity_and_never_replays(tmp_path):
             reply = client.call("write", {}, key="original-key")
             assert reply["error"]["code"] == "RECONCILIATION_REQUIRED"
             assert reply["error"]["details"]["retry_key"] == "original-key"
+            assert reply["error"]["details"]["request_started"] is True
+            assert reply["error"]["details"]["effect_not_started"] is False
             assert len(service.calls) == 1
             assert service.calls[0][1].key == "original-key"
         service.block.set()
@@ -303,3 +305,58 @@ def test_closed_binding_stream_is_transport_loss():
     stream.close()
     with pytest.raises(EOFError):
         read_frame(stream)
+
+
+def test_keyed_connect_failure_proves_operation_was_not_sent(tmp_path):
+    client = Client(tmp_path / "absent.sock", workspace_id="workspace", operator=True)
+    reply = client.call("commit.execute", {"paths": ["owned.txt"]}, key="new-key")
+    assert reply["error"]["code"] == "STORAGE_UNAVAILABLE"
+    assert reply["error"]["details"] == {
+        "retry_key": "new-key", "request_started": False, "effect_not_started": True,
+    }
+    assert "new-key" not in client._uncertain_keys
+
+
+def test_keyed_bind_transport_failure_does_not_start_operation(tmp_path):
+    entered, release = threading.Event(), threading.Event()
+    try:
+        with running(tmp_path, bind_gate=(entered, release)) as (_, service, _, path):
+            client = Client(path, {"native_session_id": "native-a"}, workspace_id="workspace", timeout=0.05)
+            reply = client.call("write", key="bind-failed")
+            assert entered.is_set()
+            assert reply["error"]["code"] == "STORAGE_UNAVAILABLE"
+            assert reply["error"]["details"]["effect_not_started"] is True
+            assert reply["error"]["details"]["request_started"] is False
+            assert not service.calls
+            release.set()
+    finally:
+        release.set()
+
+
+def test_partial_operation_send_remains_uncertain(monkeypatch, tmp_path):
+    client = Client(tmp_path / "unused.sock", workspace_id="workspace", operator=True)
+
+    class PartialSend:
+        def sendall(self, data):
+            assert b'"operation":"write"' in data
+            raise BrokenPipeError("partial send cannot prove no effect")
+
+        def shutdown(self, how):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(client, "connect", lambda: client)
+    client._socket, client._stream = PartialSend(), io.BytesIO()
+    reply = client.call("write", key="partial-key")
+    assert reply["error"]["code"] == "RECONCILIATION_REQUIRED"
+    assert reply["error"]["details"]["request_started"] is True
+    assert reply["error"]["details"]["effect_not_started"] is False
+    assert "partial-key" in client._uncertain_keys
+    monkeypatch.setattr(client, "connect", lambda: (_ for _ in ()).throw(ConnectionRefusedError()))
+    retry = client.call("write", key="partial-key")
+    assert retry["error"]["code"] == "RECONCILIATION_REQUIRED"
+    assert retry["error"]["details"]["request_started"] is False
+    assert retry["error"]["details"]["effect_not_started"] is False
+    assert retry["error"]["details"]["prior_request_uncertain"] is True

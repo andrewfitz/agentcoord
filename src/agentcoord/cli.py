@@ -8,10 +8,13 @@ import json
 import math
 import os
 import secrets
+import shlex
+import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 from .core import CoordinationError, identifier, validate_fields
@@ -778,11 +781,12 @@ CATALOG = (
         "commit.execute",
         "commit execute",
         "commit_execute",
-        "Commit exact owned paths or a reviewed patch through a private index.",
+        "Commit exact owned paths or a reviewed patch; unavailable coordination uses local Git.",
         {
             "paths": {"type": "array", "items": {**TEXT, "maxLength": 4096}, "minItems": 1},
             "message": TEXT,
             "bump_version": BOOL,
+            "local": BOOL,
             "adopt_staged": BOOL,
             "patch": TEXT,
             "patch_file": TEXT,
@@ -1178,13 +1182,148 @@ def parser():
     return root
 
 
-def invoke(client, spec, arguments, *, context_guards=None):
+def _commit_report(message):
+    sys.stderr.write(f"agentcoord commit: {message}\n")
+
+
+def _local_commit(workspace, arguments, key, *, report=None, reason=None):
+    from . import local_commits
+
+    diagnostics = []
+
+    def emit(message):
+        diagnostics.append(message)
+        if report:
+            report(message)
+
+    emit(reason or "Using local Git; the coordination service is not required.")
+    emit(f"Selected {len(arguments['paths'])} exact paths; peer staging and Git hooks stay intact.")
+    result = local_commits.execute(workspace, arguments, key=key, report=emit)
+    result["diagnostics"] = diagnostics
+    if reason:
+        result["fallback_reason"] = reason
+    return result
+
+
+def _commit_guidance(envelope, workspace, arguments, key):
+    if envelope.get("ok") or workspace is None:
+        return envelope
+    error = envelope.setdefault("error", {})
+    if error.get("code") not in {"STORAGE_UNAVAILABLE", "UNBOUND_ACTOR", "SERVICE_BUSY",
+                                 "RECONCILIATION_REQUIRED", "PROTOCOL_MISMATCH", "NOT_FOUND"}:
+        return envelope
+    details = error.setdefault("details", {})
+    argv = ["agentcoord", "--project", str(workspace.root), "commit", "execute", "--local",
+            "--paths", *arguments["paths"], "--message", arguments["message"], "--key", key]
+    for flag in ("bump_version", "adopt_staged"):
+        if arguments.get(flag):
+            argv.append("--" + flag.replace("_", "-"))
+    for name in ("patch_file", "patch_sha256", "base_commit"):
+        if arguments.get(name):
+            argv.extend(["--" + name.replace("_", "-"), arguments[name]])
+    command = shlex.join(argv)
+    details["local_fallback"] = {
+        "command": command if len(command.encode()) <= 4096 and not arguments.get("patch") else None,
+        "guidance": "Use the same reviewed arguments with --local. Local Git checks existing native effects and preserves peer staging. A missing receipt alone is not a commit blocker; a queued/running or uncertain Git publication must be resolved first.",
+    }
+    return envelope
+
+
+def invoke(client, spec, arguments, *, context_guards=None, workspace=None, report=None):
     arguments = dict(arguments)
     validate_arguments(spec, arguments)
     key = arguments.pop("key", None) if spec.mutation else None
     if spec.mutation and key is None:
         key = secrets.token_hex(16)
-    return client.call(spec.operation, arguments, key=key, **(context_guards or {}))
+    is_commit = spec.operation == "commit.execute"
+    local = arguments.pop("local", False) if is_commit else False
+    workspace = workspace or getattr(client, "workspace", None)
+    if is_commit and local:
+        if context_guards:
+            raise CoordinationError("INVALID_ARGUMENT", "Local Git cannot impersonate a captured native origin")
+        if workspace is None:
+            raise CoordinationError("INVALID_ARGUMENT", "Local Git requires the actual workspace root")
+        return _local_commit(workspace, arguments, key, report=report)
+    try:
+        result = client.call(spec.operation, arguments, key=key, **(context_guards or {}))
+    except CoordinationError as error:
+        if not is_commit or workspace is None:
+            raise
+        result = error_envelope(error.code, error.message, details=error.details,
+                                retryable=error.retryable, next_action=error.next_action)
+        if (error.code in {"UNBOUND_ACTOR", "STORAGE_UNAVAILABLE", "SERVICE_BUSY"}
+                and not context_guards and key not in getattr(client, "_uncertain_keys", ())):
+            # These exceptions come from binding, before the operation frame.
+            return _local_commit(workspace, arguments, key, report=report,
+                                 reason=f"Native binding unavailable ({error.code}); commit request was not sent. Falling back to local Git.")
+    if is_commit and workspace is not None:
+        details = result.get("error", {}).get("details", {})
+        if (result.get("error", {}).get("code") == "STORAGE_UNAVAILABLE"
+                and details.get("effect_not_started") is True and not context_guards):
+            return _local_commit(workspace, arguments, key, report=report,
+                                 reason="Coordination request was not sent; falling back to local Git.")
+        result = _commit_guidance(result, workspace, arguments, key)
+    return result
+
+
+def _execute_commit_cli(args, workspace, arguments, factory, origin):
+    validate_arguments(args.spec, arguments)
+    key = arguments.setdefault("key", secrets.token_hex(16))
+    if arguments.get("local") or workspace.id is None:
+        if origin is not None:
+            raise CoordinationError("INVALID_ARGUMENT", "Local Git cannot impersonate a captured native origin")
+        selected = {k: v for k, v in arguments.items() if k not in {"key", "local"}}
+        return _local_commit(workspace, selected, key, report=_commit_report,
+                             reason="Git repository is unregistered; using local Git without a native identity." if workspace.id is None else None)
+    invoked = False
+    try:
+        from .config import load_config
+
+        context = {} if args.operator else native_context(
+            args.harness, executable_paths=load_config(workspace).native_executables
+        )
+        with factory(workspace.socket_path, context, workspace_id=workspace.id,
+                     operator=args.operator, transport="operator" if args.operator else "cli") as client:
+            guards = _origin_guards(client, origin)
+            invoked = True
+            result = invoke(client, args.spec, arguments, context_guards=guards,
+                            workspace=workspace, report=_commit_report)
+            if not args.no_wait:
+                result = wait_operation(client, result, timeout=args.wait_timeout,
+                                        context_guards=guards)
+            if not result.get("ok"):
+                selected = {k: v for k, v in arguments.items() if k not in {"key", "local"}}
+                result = _commit_guidance(result, workspace, selected, key)
+                _commit_report(result["error"].get("message", "Native commit did not complete."))
+                fallback = result["error"].get("details", {}).get("local_fallback")
+                if fallback:
+                    _commit_report(fallback["guidance"])
+            return result
+    except (OSError, EOFError, CoordinationError) as error:
+        if (invoked or origin is not None or isinstance(error, CoordinationError)
+                and error.code not in {"UNBOUND_ACTOR", "STORAGE_UNAVAILABLE", "SERVICE_BUSY"}):
+            raise
+        selected = {k: v for k, v in arguments.items() if k not in {"key", "local"}}
+        return _local_commit(workspace, selected, key, report=_commit_report,
+                             reason=f"Native connection unavailable before commit admission ({type(error).__name__}); falling back to local Git.")
+
+
+def _discover_commit_workspace(explicit_root):
+    """Allow Git-only commits without registering or inventing an actor."""
+    from .config import discover_workspace
+
+    try:
+        return discover_workspace(explicit_root=explicit_root)
+    except CoordinationError as error:
+        if error.code != "NOT_FOUND":
+            raise
+    target = explicit_root or os.environ.get("AGENTCOORD_WORKSPACE") or Path.cwd()
+    git = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                         cwd=Path(target).expanduser(), capture_output=True, check=False)
+    if git.returncode:
+        raise CoordinationError("INVALID_ARGUMENT", "Local commit requires a Git working tree")
+    return SimpleNamespace(root=Path(os.fsdecode(git.stdout).strip()), id=None,
+                           database_path=None)
 
 
 def wait_operation(client, envelope, *, timeout=60, clock=time.monotonic, sleep=time.sleep,
@@ -1535,7 +1674,9 @@ def main(argv=None, *, client_factory=None):
             result = _maintenance(args, None)
             workspace = None
         else:
-            workspace = discover_workspace(explicit_root=args.root)
+            workspace = (_discover_commit_workspace(args.root)
+                         if getattr(args, "spec", None) and args.spec.operation == "commit.execute"
+                         else discover_workspace(explicit_root=args.root))
         if origin is not None and workspace.id != origin["workspace_id"]:
             raise CoordinationError("WRONG_WORKSPACE", "Origin context belongs to another workspace")
         if getattr(args, "maintenance", None) and args.maintenance != "init":
@@ -1573,27 +1714,21 @@ def main(argv=None, *, client_factory=None):
                     )
                 arguments.update(artifact)
             factory = client_factory or Client
-            from .config import load_config
+            if args.spec.operation == "commit.execute":
+                result = _execute_commit_cli(args, workspace, arguments, factory, origin)
+            else:
+                from .config import load_config
 
-            context = (
-                {}
-                if args.operator
-                else native_context(
-                    args.harness, executable_paths=load_config(workspace).native_executables
-                )
-            )
-            with factory(
-                workspace.socket_path,
-                context,
-                workspace_id=workspace.id,
-                operator=args.operator,
-                transport="operator" if args.operator else "cli",
-            ) as client:
-                guards = _origin_guards(client, origin)
-                result = invoke(client, args.spec, arguments, context_guards=guards)
-                if hasattr(args, "no_wait") and not args.no_wait:
-                    result = wait_operation(client, result, timeout=args.wait_timeout,
-                                            context_guards=guards)
+                context = ({} if args.operator else native_context(
+                    args.harness, executable_paths=load_config(workspace).native_executables))
+                with factory(workspace.socket_path, context, workspace_id=workspace.id,
+                             operator=args.operator,
+                             transport="operator" if args.operator else "cli") as client:
+                    guards = _origin_guards(client, origin)
+                    result = invoke(client, args.spec, arguments, context_guards=guards)
+                    if hasattr(args, "no_wait") and not args.no_wait:
+                        result = wait_operation(client, result, timeout=args.wait_timeout,
+                                                context_guards=guards)
         if getattr(args, "maintenance", None) == "hook":
             if not isinstance(result, dict) or not isinstance(result.get("ok"), bool):
                 raise CoordinationError("INVALID_RESPONSE", "Lifecycle hook returned no valid result")

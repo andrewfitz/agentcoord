@@ -239,6 +239,7 @@ class Client:
                 explicit[name] = value
         request_id = secrets.token_hex(16)
         with self._lock:
+            request_started = False
             try:
                 self.connect()
                 requested_guards = {**self._next_context, **explicit}
@@ -280,7 +281,10 @@ class Client:
                 connection, stream = self._socket, self._stream
                 if connection is None or stream is None:
                     raise EOFError
-                connection.sendall(encode_frame(frame))
+                encoded = encode_frame(frame)
+                # sendall may fail after a partial operation frame was sent.
+                request_started = True
+                connection.sendall(encoded)
                 result = read_frame(stream)
                 if result.get("protocol") != PROTOCOL or result.get("request_id") != request_id:
                     raise CoordinationError(
@@ -292,17 +296,27 @@ class Client:
                 return result
             except (OSError, EOFError):
                 self.close()
-                if key:
+                prior_uncertain = bool(key and key in self._uncertain_keys)
+                uncertain = bool(key and (request_started or prior_uncertain))
+                if uncertain:
                     self._uncertain_keys.add(key)
+                details = {
+                    "request_started": request_started,
+                    "effect_not_started": not request_started and not prior_uncertain,
+                }
+                if key:
+                    details["retry_key"] = key
+                if prior_uncertain:
+                    details["prior_request_uncertain"] = True
                 return error_envelope(
-                    "RECONCILIATION_REQUIRED" if key else "STORAGE_UNAVAILABLE",
+                    "RECONCILIATION_REQUIRED" if uncertain else "STORAGE_UNAVAILABLE",
                     "Service response unavailable; the operation may have committed"
-                    if key
+                    if uncertain
                     else "Workspace service unavailable",
                     request_id=request_id,
-                    details={"retry_key": key} if key else {},
+                    details=details,
                     next_action="Inspect receipt.get with the same retry key before retrying"
-                    if key
+                    if uncertain
                     else "Start the workspace service",
                 )
 

@@ -100,7 +100,7 @@ with `verified` status is a producer's claim; assess the cited checks yourself.
 | Command | When to use it |
 | --- | --- |
 | `commit status` | Inspect admission without joining a queue. |
-| `commit execute` | Commit exact owned paths through a private index, or a reviewed patch and full base for owned hunks in mixed files. |
+| `commit execute` | Commit exact owned paths or a reviewed patch and full base through a private index. Definitely unsent requests fall back to local Git automatically; `--local` / MCP `local: true` selects it explicitly. |
 | `commit acquire` | Obtain a manual shared-index grant only when native execution cannot cover the required manual operation; inspect the actual granted receipt. |
 | `commit cancel` | Cancel an exact owned pending admission that has not been granted. |
 | `commit release` | Release the exact owned manual grant. |
@@ -120,6 +120,11 @@ captured `HEAD`. The CLI hashes `--patch-file`; an inline `--patch` needs its ex
 do not enable it to sweep up peer staging. `--bump-version` uses the repository's
 explicit configuration when required; this skill imposes no version policy.
 Commits do not run or wait for tests, and test execution never holds a grant.
+Local execution needs no native binding or service; it retains the same hooks,
+version configuration and staging protections. CLI diagnostics go to stderr;
+MCP returns `diagnostics` with the result. Retain the retry key: local receipts
+live under Git metadata and prevent duplicate publication after a lost response.
+An uncertain prior publication still requires inspecting actual Git evidence.
 
 ## Scheduled work and durable effects
 

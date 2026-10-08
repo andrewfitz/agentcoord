@@ -206,8 +206,27 @@ a short local task receipt of any important unsent outcome; publish one summary
 at the next natural boundary after connectivity returns, rather than replaying
 every missed activity or sending repeated acknowledgments.
 
-For fully owned files with reviewed changes and required checks complete, use
-Git directly during an outage:
+For reviewed owned changes with required checks complete, ordinary `commit execute`
+falls back to local Git when connection/binding fails before sending the request.
+Select the local path explicitly with the same arguments and retry key:
+
+```sh
+agentcoord commit execute --local --paths path/to/owned-file --message 'Describe the owned change' --key retained-commit-key
+```
+
+MCP uses the same `commit_execute` tool with `local: true`. It needs no native
+identity or service and supports exact files, untracked files, reviewed patches
+and configured `--bump-version`. The private index preserves unrelated staging,
+Git hooks stay enabled, and the final Git lock serializes publication. Verbose
+diagnostics explain fallback, preparation and the Git result; durable receipts
+under `.git/agentcoord-local-commits/` prevent repeated effects. Local execution
+checks retained native effects before publication; a missing service receipt
+alone does not block a commit. Inspect genuine queued/running/uncertain Git work
+or an exact selected-path overlap before publishing. Automatic synthesized version
+bumps do not create waits for disjoint work.
+
+If the Agentcoord executable itself is unavailable, fully owned files can use
+Git directly:
 
 ```sh
 git commit --only -m 'Describe the owned change' -- path/to/owned-file

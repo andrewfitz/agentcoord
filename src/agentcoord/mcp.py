@@ -228,6 +228,7 @@ def run(workspace, *, harness=None):
     context = native_context(harness, executable_paths=load_config(workspace).native_executables)
     channel = claude_channel_requested(context)
     client = Client(workspace.socket_path, context, workspace_id=workspace.id, transport="mcp")
+    client.workspace = workspace
     try:
         # Hosts may negotiate MCP before SessionStart registers this captured
         # native process. Bind once when the first tool invocation reaches call.

@@ -434,8 +434,14 @@ uncertain response. A queued receipt is not completion. Inspect a failure once;
 retry only after its concrete cause changes.
 
 A coordination outage does not block independent edits, tests or authorized
-commits of fully owned files. Preserve peer staging and local hooks. Follow the
-[direct Git outage procedure](src/agentcoord/integrations/skill/references/workflows.md#coordination-outages)
+commits of fully owned files. `commit execute` automatically uses local Git if
+the native request was not sent. Use the same arguments and key with `--local`
+(MCP `local: true`) explicitly: no service or native binding is required. This
+preserves peer staging, Git hooks, reviewed patches and configured version bumps.
+CLI prints recovery progress to stderr; MCP returns `diagnostics`. Small durable
+receipts under `.git/agentcoord-local-commits/` prevent duplicate publication.
+Follow the
+[outage procedure](src/agentcoord/integrations/skill/references/workflows.md#coordination-outages)
 and defer only real overlap or uncertain prior publication. A missing message is
 not a missing permission to commit.
 

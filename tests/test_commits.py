@@ -119,6 +119,17 @@ def test_exact_selection_preserves_peer_staging_and_synthesizes_version_once(rep
     assert control.released == [control.grant_id]
 
 
+def test_already_committed_selected_work_cannot_repeat_as_version_only_commit(repo):
+    execute(repo, bump=True)
+    head = git(repo, "rev-parse", "HEAD")
+    control = Control()
+    with pytest.raises(ValueError, match="No selected changes"):
+        execute(repo, bump=True, control=control)
+    assert git(repo, "rev-parse", "HEAD") == head
+    assert (repo / "version.txt").read_text() == "version = 1.2.4\n"
+    assert control.released == [control.grant_id]
+
+
 def test_optional_version_configuration_absent_and_dirty_target_fail_closed(repo):
     result = commits._execute_git(
         repo,

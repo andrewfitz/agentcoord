@@ -50,8 +50,10 @@ applies, edit and verify silently.
   paths for owned files or a reviewed patch for owned hunks in mixed files.
   Preserve peer edits and unrelated staging. Tests do not hold the commit window.
 - A coordination outage does not block independent edits, checks or authorized
-  commits of fully owned files. Read the outage section below for direct Git
-  fallback; a failed message is not a missing commit permission.
+  commits of fully owned files. `commit execute` automatically falls back to
+  verbose local Git for a definitely unsent request; use the same arguments and
+  key with `--local` / MCP `local: true` explicitly when needed. Read the outage
+  workflow for recovery; a failed message is not a missing commit permission.
 
 A new scope's `scope_context` is advisory; folder overlap alone needs no message
 or wait. `evidence` includes recent completed outcomes after owners change tasks.

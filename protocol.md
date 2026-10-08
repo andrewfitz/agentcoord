@@ -164,8 +164,24 @@ diagnostic referenced by the receipt; hook output stays in service stderr.
 Reconcile uncertain publication before retrying. Commits do not submit or await tests.
 
 Coordination outages do not veto independent edits, checks or authorized commits.
-An adapter-only failure can use the installed CLI. An unreachable service stops
-coordination calls, not useful work: for reviewed fully owned paths, direct
+An adapter-only failure can use the installed CLI. `commit execute` automatically
+uses local Git when connection or native binding fails before the request is sent.
+Use the same reviewed arguments and retained key with `--local` (MCP `local: true`)
+to choose this path explicitly. It uses the same private index, exact-file or
+reviewed-patch selection, hooks, configured version synthesis and final Git lock.
+It reports why fallback was chosen, preparation/publication phases and the Git
+result; MCP receives these diagnostics in its result. Durable retry receipts live
+under `.git/agentcoord-local-commits/`; same-key replay never repeats publication.
+An unregistered Git checkout can use local execution without inventing an actor.
+Local execution reads existing native effects: completed publication is reused;
+queued/running/uncertain publication or an exact selected-path admission requires
+reconciliation. Automatic version synthesis does not create overlap between
+otherwise disjoint selections. An unreadable coordination database warns once
+and does not veto independent Git checks. A version bump alone cannot repeat
+selected work that already landed.
+
+An unreachable service stops coordination calls, not useful work. If the installed
+package itself is unavailable, for reviewed fully owned paths, direct
 `git commit --only -m MESSAGE -- PATH ...` preserves unrelated staging under Git's
 normal locks. Add only exact owned new paths first when needed; retain local
 version rules and existing hooks. Never bypass real conflicts or switch commit

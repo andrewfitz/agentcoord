@@ -1507,6 +1507,8 @@ def _execute_git(
                 affected = [*selected, *([version] if bump_version else [])]
                 original = entries(private, affected)
                 apply(private, selected, snapshot)
+                if entries(private, selected) == {p: v for p, v in original.items() if p in selected}:
+                    raise ValueError("No selected changes to commit; a version bump alone does not repeat the reviewed work")
                 version_before = version_after = None
                 if bump_version:
                     if (root / version).is_symlink() or not (
