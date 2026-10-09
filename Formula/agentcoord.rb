@@ -2,9 +2,9 @@
 class Agentcoord < Formula
   include Language::Python::Virtualenv
   desc "Native coordination for agents sharing a local Git workspace"
-  url "https://github.com/andrewfitz/agentcoord/releases/download/v0.1.13/agentcoord-install.tar.gz"
-  version "0.1.13"
-  sha256 "c299f868a8ecf9da05761bdf80324b18e5ea12b8a4da9cbe9ae1ab15ec35e75f"
+  url "https://github.com/andrewfitz/agentcoord/releases/download/v0.1.14/agentcoord-install.tar.gz"
+  version "0.1.14"
+  sha256 "2a13fbbaa046c2004930e8a2ccd31b3d9b58f64ac19520bbc6545d32d89e3138"
   depends_on "python@3.14"
 
   def install
