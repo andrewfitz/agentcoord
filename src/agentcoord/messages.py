@@ -17,6 +17,12 @@ from .core import (
 )
 from .core import integer as _integer
 
+# Batch responses are usually metadata plus a short body prefix. Four KiB is
+# enough for one bounded item and its continuation metadata while allowing
+# callers to stay token-efficient; the frame and response remain capped below.
+BATCH_BYTE_BUDGET_MIN = 4096
+BATCH_BYTE_BUDGET_MAX = 65536
+
 SCHEMA = (
     """CREATE TABLE messages (
         id TEXT PRIMARY KEY, sender_id TEXT NOT NULL REFERENCES actors(id),
@@ -222,7 +228,7 @@ def read_batch(tx, context, ids, *, index=0, body_limit=8192, byte_budget=32768)
         _error("Batch requires 1..16 distinct message IDs")
     index = integer(index, "index", 0, len(ids))
     body_limit = integer(body_limit, "body_limit", 4, 32768)
-    byte_budget = integer(byte_budget, "byte_budget", 16384, 65536)
+    byte_budget = integer(byte_budget, "byte_budget", BATCH_BYTE_BUDGET_MIN, BATCH_BYTE_BUDGET_MAX)
     result = {"items": [], "next_index": None}
     item_bytes = 0
     for position in range(index, len(ids)):

@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from .core import CoordinationError, identifier, validate_fields
+from .messages import BATCH_BYTE_BUDGET_MAX, BATCH_BYTE_BUDGET_MIN
 from .transport import Client, encode_frame, error_envelope
 
 TEXT = {"type": "string", "minLength": 1, "maxLength": 65536}
@@ -306,7 +307,7 @@ CATALOG = (
             "ids": {"type": "array", "items": ID, "minItems": 1, "maxItems": 16, "uniqueItems": True},
             "index": {"type": "integer", "minimum": 0, "maximum": 16},
             "body_limit": {"type": "integer", "minimum": 4, "maximum": 32768},
-            "byte_budget": {"type": "integer", "minimum": 16384, "maximum": 65536},
+            "byte_budget": {"type": "integer", "minimum": BATCH_BYTE_BUDGET_MIN, "maximum": BATCH_BYTE_BUDGET_MAX},
         },
         ("ids",),
         False,

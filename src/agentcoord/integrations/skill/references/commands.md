@@ -36,7 +36,7 @@ agentcoord evidence --paths src/parser
 | `sync` | Present a bounded action digest at a natural work boundary; not in a polling loop. |
 | `inbox` | Peek at pending work without presentation or handling when a specific inspection needs it. |
 | `message` | Read a selected message fully, following UTF-8 `next_offset` chunks. |
-| `message-batch` | Read up to 16 selected messages in one bounded call; follow `next_index` with the same IDs and each body's `next_offset`. Reads do not handle messages. |
+| `message-batch` | Read up to 16 selected messages in one bounded call; `--byte-budget` accepts 4096..65536 bytes and `--body-limit` 4..32768 bytes. Follow `next_index` with the same IDs and each body's `next_offset`. Reads do not handle messages. |
 | `attachments` | Traverse all attachment metadata for that message with `--after`. |
 | `attachment` | Read the complete retained JSON reference in chunks; join `reference` strings before parsing it. |
 | `consume` | Explicitly mark one message handled after acting on its content. |

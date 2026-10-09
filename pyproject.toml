@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentcoord"
-version = "0.1.13"
+version = "0.1.14"
 description = "Native coordination for agents sharing a local Git workspace"
 readme = "README.md"
 requires-python = ">=3.11"

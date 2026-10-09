@@ -125,6 +125,24 @@ def test_cli_batch_schema_and_compact_mcp_preserve_exact_content():
     assert len(encoded.encode()) < len(json.dumps(envelope, ensure_ascii=False).encode())
 
 
+def test_small_batch_budget_is_valid_for_short_messages(runtime):
+    service, actors = runtime
+    ids = [send(runtime, "short one"), send(runtime, "short two")]
+    result = service.execute(actors[1], Call("message.get_batch", {
+        "ids": ids, "body_limit": 512, "byte_budget": 4096,
+    }))
+    assert result["ok"], result
+    assert [item["body"] for item in result["data"]["items"]] == ["short one", "short two"]
+    assert len(canonical_json(result["data"]).encode()) <= 4096
+
+
+def test_batch_budget_contract_is_shared_by_cli_and_service():
+    spec = cli.BY_TOOL["message_batch"]
+    assert spec.schema()["properties"]["byte_budget"]["minimum"] == messages.BATCH_BYTE_BUDGET_MIN
+    assert spec.schema()["properties"]["byte_budget"]["maximum"] == messages.BATCH_BYTE_BUDGET_MAX
+    cli.validate_arguments(spec, {"ids": ["00000000-0000-0000-0000-000000000001"], "byte_budget": 4096})
+
+
 def test_tight_batch_budget_does_not_refetch_bodies_when_shortening(runtime):
     service, actors = runtime
     ids = [send(runtime, '"\\\n🧩' * 4000, declared_context={"why": "x" * 8000}) for _ in range(2)]

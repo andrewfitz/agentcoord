@@ -156,6 +156,12 @@ preparation proceeds concurrently; the final shared Git update is serialized.
 Commit selection has no file-count quota. Each path remains bounded and the
 request must fit the configured transport frame; message/list pagination bounds
 do not limit commits.
+Selected message batches use a 4096..65536-byte response budget and a 4..32768-byte
+body prefix. The lower budget is deliberately small for short handoffs; the upper
+bound protects frame memory. If a complete item cannot fit, the service shortens
+its UTF-8 body prefix and returns `next_offset`, or reports that metadata itself
+needs a larger budget. Continue from the returned cursor rather than retrying the
+same oversized request.
 Unrelated staging and peer hunks are preserved. A published commit remains
 published even when a later notification or cleanup fails. Inspect its receipt
 before another attempt. Commit failures expose safe categories, the execution
