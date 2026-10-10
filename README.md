@@ -42,7 +42,7 @@ coordination. It is a design draft, not a list of new released features.
 | Optional Herdr pane | Herdr 0.9.3+ |
 
 The current prebuilt Brew bundle is specifically locked to **macOS 27 ARM64,
-Homebrew CPython 3.14**. Its installer refuses a different target or ABI. Other
+Homebrew CPython 3.15**. Its installer refuses a different target or ABI. Other
 platforms can install the Python wheel, but native harness and platform behavior
 must be verified in that environment. Windows and remote multi-user coordination
 are not supported.
@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.12/agentcoord-0.1.12-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.15/agentcoord-0.1.15-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.12/agentcoord-0.1.12-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.15/agentcoord-0.1.15-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute

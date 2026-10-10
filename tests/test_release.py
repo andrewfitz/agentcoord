@@ -42,6 +42,15 @@ def test_public_readiness_adapter_enqueues_with_retry_key(tmp_path):
     assert finished["state"] == "succeeded", finished
 
 
+def test_release_lock_keeps_314_and_adds_verified_315_target():
+    lock = json.loads((Path(__file__).resolve().parents[1] / "release-lock.json").read_text())
+    assert lock["targets"]["cpython-314-macosx-27.0-arm64"]["python_formula"] == "python@3.14"
+    target = lock["targets"]["cpython-315-macosx-27.0-arm64"]
+    assert target["python_formula"] == "python@3.15"
+    assert target["abi"] == "cpython-315-darwin"
+    assert next(item for item in target["wheels"] if item["name"] == "pydantic_core")["version"] == "2.50.0"
+
+
 def test_uncertain_job_recovery_hint_names_implemented_domain_command(tmp_path):
     from agentcoord.application import build_service
     from agentcoord.cli import CATALOG
@@ -64,10 +73,10 @@ def test_uncertain_job_recovery_hint_names_implemented_domain_command(tmp_path):
 
 def test_formula_installs_only_hash_checked_offline_wheels():
     rendered = release.formula("0.1.0", "file:///releases/abc/agentcoord-0.1.0.tar.gz", "a" * 64,
-                               target="cpython-314-macosx-27.0-arm64", abi="cpython-314-darwin")
+                               target="cpython-315-macosx-27.0-arm64", abi="cpython-315-darwin")
     assert 'url "file:///releases/abc/agentcoord-0.1.0.tar.gz"' in rendered
     assert 'sha256 "' + "a" * 64 + '"' in rendered
-    assert 'depends_on "python@3.14"' in rendered
+    assert 'depends_on "python@3.15"' in rendered
     assert "virtualenv_create" in rendered
     assert "--no-index" in rendered and "--only-binary=:all:" in rendered and "--require-hashes" in rendered
     assert "release target mismatch" in rendered and "release ABI mismatch" in rendered
@@ -239,12 +248,13 @@ def test_app_updates_reuse_wheels_and_offline_resolver_checks_closure(binary_loc
     monkeypatch.setattr(release, "_run", run)
     if missing:
         with pytest.raises(RuntimeError, match="Release command failed"):
-            release.build_release(package, tmp_path / "first", formula_output=tmp_path / "first.rb", cache=tmp_path / "cache")
+            release.build_release(package, tmp_path / "first", formula_output=tmp_path / "first.rb", cache=tmp_path / "cache",
+                                  python_formula="python@3.14")
         assert not (tmp_path / "first.rb").exists()
         return
     remote_url = 'https://example.test/immutable/#{system("danger")}/agentcoord-install.tar.gz'
     first = release.build_release(package, tmp_path / "first", formula_output=tmp_path / "first.rb", cache=tmp_path / "cache",
-                                  installation_url=remote_url, source_url="https://example.test/source/immutable.tar.gz")
+                                  python_formula="python@3.14", installation_url=remote_url, source_url="https://example.test/source/immutable.tar.gz")
     assert first["installation_url"] == remote_url
     assert first["source_url"] == "https://example.test/source/immutable.tar.gz"
     assert first["installation_sha256"] == release._digest(Path(first["installation_archive"]))
@@ -253,7 +263,8 @@ def test_app_updates_reuse_wheels_and_offline_resolver_checks_closure(binary_loc
     assert first["installation_sha256"] in formula and first["source_sha256"] not in formula
     monkeypatch.setattr(release, "urlopen", lambda *a, **k: pytest.fail("application update redownloaded dependencies"))
     body[0] = "changed application"
-    second = release.build_release(package, tmp_path / "second", formula_output=tmp_path / "second.rb", cache=tmp_path / "cache")
+    second = release.build_release(package, tmp_path / "second", formula_output=tmp_path / "second.rb", cache=tmp_path / "cache",
+                                   python_formula="python@3.14")
     assert first["dependency_cache"]["key"] == second["dependency_cache"]["key"]
     assert second["dependency_cache"]["hits"] == 1 and second["dependency_cache"]["downloads"] == 0
     assert first["installation_sha256"] != second["installation_sha256"]

@@ -32,7 +32,7 @@ def _ruby(value: str) -> str:
     return json.dumps(value, ensure_ascii=False).replace("#{", "\\#{")
 
 
-def formula(version: str, install_url: str, sha256: str, *, target: str, abi: str, python_formula: str = "python@3.14") -> str:
+def formula(version: str, install_url: str, sha256: str, *, target: str, abi: str, python_formula: str = "python@3.15") -> str:
     python = python_formula.replace("@", "")
     guard = ("import sys,sysconfig; "
              "actual=f'{sys.implementation.name}-{sys.version_info.major}{sys.version_info.minor}-{sysconfig.get_platform()}'; "
@@ -151,7 +151,7 @@ def _archive(files: dict[str, Path], destination: Path) -> None:
 
 
 def build_release(package: Path, output: Path, *, formula_output: Path, python: str = sys.executable, source_url: str | None = None,
-                  python_formula: str = "python@3.14", cache: Path | None = None, installation_url: str | None = None) -> dict:
+                  python_formula: str = "python@3.15", cache: Path | None = None, installation_url: str | None = None) -> dict:
     package = package.resolve(strict=True)
     output = output.absolute()
     formula_output = formula_output.absolute()
@@ -222,7 +222,7 @@ def main(argv=None) -> int:
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--source-url", help="Immutable source archive provenance URL; not the formula install URL")
     parser.add_argument("--installation-url", help="Immutable installation bundle URL for a transferable formula (default: local archive URI)")
-    parser.add_argument("--python-formula", default="python@3.14")
+    parser.add_argument("--python-formula", default="python@3.15")
     args = parser.parse_args(argv)
     try:
         result = build_release(args.package, args.output, formula_output=args.formula_output, source_url=args.source_url,

@@ -352,8 +352,8 @@ def test_herdr_missing_interpreter_fails_before_candidate_publication(layout, tm
 
 def test_herdr_path_runtime_uses_homebrew_opt_alias_instead_of_versioned_keg(tmp_path, monkeypatch):
     prefix = tmp_path / "homebrew"
-    keg = prefix / "Cellar/python@3.14/3.14.8/bin/python3"
-    stable = prefix / "opt/python@3.14/bin/python3"
+    keg = prefix / "Cellar/python@3.15/3.15.0/bin/python3"
+    stable = prefix / "opt/python@3.15/bin/python3"
     for interpreter in (keg, stable):
         interpreter.parent.mkdir(parents=True)
         interpreter.symlink_to(sys.executable)
