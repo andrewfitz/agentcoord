@@ -151,6 +151,45 @@ def test_consumed_message_and_self_send_do_not_wake(runtime):
     assert own['wake'] == [{'recipient': contexts[0].actor_id, 'delivery': 'self'}]
 
 
+@pytest.mark.parametrize('during_inspection', [False, True])
+def test_presented_unhandled_message_does_not_start_another_check(runtime, during_inspection):
+    service, contexts = runtime
+    message = send(runtime)
+    def present():
+        digest = call(service, contexts[1], 'message.sync', {'new_only': True})
+        assert digest['items'][0]['id'] == message['id']
+    if not during_inspection:
+        present()
+    def deliver(service, operation, actor, channels, effect):
+        assert during_inspection, 'Already presented messages must not reach an adapter'
+        present()
+        effect()
+        pytest.fail('A digest already delivered attention; do not send another signal')
+    service.adapters['wake_delivery'] = deliver
+    outcome = service.run_operation(message['wake'][0]['operation_id'])
+    assert outcome['result']['delivery'] == 'already_presented'
+    assert outcome['effect_started_us'] is None
+    with service.store.read() as tx:
+        row = tx.connection.execute('SELECT presented_us,handled_us FROM recipients WHERE message_id=?',
+                                    (message['id'],)).fetchone()
+        assert row['presented_us'] is not None and row['handled_us'] is None
+    assert call(service, contexts[1], 'message.sync', {'new_only': True})['total'] == 0
+    assert call(service, contexts[1], 'message.sync', {})['total'] == 1
+
+
+def test_unseen_message_in_a_coalesced_burst_still_wakes(runtime):
+    service, contexts = runtime
+    first = send(runtime)
+    call(service, contexts[1], 'message.sync', {'new_only': True})
+    second = send(runtime)
+    assert second['wake'][0]['operation_id'] == first['wake'][0]['operation_id']
+    def deliver(service, operation, actor, channels, effect):
+        effect()
+        return {'delivery': 'notification_sent'}
+    service.adapters['wake_delivery'] = deliver
+    assert service.run_operation(first['wake'][0]['operation_id'])['result']['delivery'] == 'notification_sent'
+
+
 def test_default_repository_policy_and_explicit_quiet_send(runtime):
     assert Config().wake_enabled is True
     service, contexts = runtime
@@ -294,6 +333,7 @@ def test_real_private_channel_push_and_id_only_notification(short_socket_dir):
             assert notification.message.method == 'notifications/claude/channel'
             assert notification.message.params['meta'] == {'wake_id': oid}
             assert 'Parser fixed' not in notification.message.params['content']
+            assert notification.message.params['content'] == wake_adapters.signal_text({'id': oid})
             assert await deliver(route['nonce']) == b'{"delivered":true}\n'
             with pytest.raises(anyio.WouldBlock):
                 reader.receive_nowait()
@@ -320,7 +360,7 @@ def test_native_socket_permissions_and_symlinks(short_socket_dir):
             wake_adapters.private_socket(path)
 
 
-@pytest.mark.parametrize('native_status,delivery', [('idle', 'turn_started'), ('active', 'native_queued'),
+@pytest.mark.parametrize('native_status,delivery', [('idle', 'turn_started'), ('active', 'deferred_busy'),
                                                   ('unknown', 'unavailable')])
 def test_codex_detects_native_idle_and_never_starts_busy_or_unknown(runtime, monkeypatch, native_status, delivery):
     service, contexts = runtime
@@ -343,13 +383,14 @@ def test_codex_detects_native_idle_and_never_starts_busy_or_unknown(runtime, mon
     result = wake_adapters.codex(service, {'id': uid()}, actor, [], lambda: effect.append(True))
     assert result['delivery'] == delivery
     expected = ['thread/loaded/list', 'thread/read']
-    if native_status != 'unknown':
-        expected.append('thread/queue/add')
-        if native_status == 'idle':
-            expected.append('thread/queue/start')
+    if native_status == 'idle':
+        expected.extend(['thread/queue/add', 'thread/queue/start'])
         assert effect == [True]
         assert requests[2][1]['clientUserMessageId'].startswith('agentcoord:')
-        assert requests[2][1]['input'][0]['text'].startswith('Agentcoord has pending')
+        text = requests[2][1]['input'][0]['text']
+        assert text.startswith('Agentcoord notification, not a new user request.')
+        assert 'resume unfinished work in the same turn' in text
+        assert 'sync --new-only' in text
     else:
         assert effect == []
     assert [r[0] for r in requests] == expected

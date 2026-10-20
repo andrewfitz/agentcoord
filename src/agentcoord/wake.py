@@ -19,6 +19,19 @@ from .identity import actor_for_context, process_status
 SCHEMA = ()
 
 
+def notification_text(operation_id):
+    """One advisory across harnesses; peer attention never replaces user work."""
+    return (
+        'Agentcoord notification, not a new user request. Keep your current task as the priority. '
+        'At the next natural work boundary, run at most one agentcoord sync --new-only '
+        'if the messages have not already appeared in a returned digest. '
+        'Address only an immediate dependency or conflict affecting that task; leave unrelated work pending. '
+        'Then resume unfinished work in the same turn. Do not drain the inbox, ask peers for status, '
+        'send courtesy replies, wait for more messages, or end the turn just to report this check. '
+        'An unchanged coordination failure ends the check. Wake receipt: ' + operation_id
+    )
+
+
 def enabled(actor, default=False):
     metadata = json.loads(actor['metadata_json'])
     consent = metadata.get('wake', {})
@@ -185,6 +198,14 @@ def _pending(tx, operation):
         (args['recipient'], args['first_sequence'], args['through_sequence'])).fetchone() is not None
 
 
+def _unpresented(tx, operation):
+    args = operation['arguments']
+    return tx.connection.execute('''SELECT 1 FROM recipients r JOIN messages m ON m.id=r.message_id
+        WHERE r.actor_id=? AND r.handled_us IS NULL AND r.presented_us IS NULL
+        AND m.sequence BETWEEN ? AND ? LIMIT 1''',
+        (args['recipient'], args['first_sequence'], args['through_sequence'])).fetchone() is not None
+
+
 def execute_operation(service, operation):
     from . import wake_adapters
 
@@ -193,6 +214,8 @@ def execute_operation(service, operation):
             actor, process = validate_recipient(tx, operation, default_enabled=service.config.wake_enabled)
             if not _pending(tx, operation):
                 return {'delivery': 'handled', 'reason': 'Recipient already handled these messages'}
+            if not _unpresented(tx, operation):
+                return {'delivery': 'already_presented', 'reason': 'Messages already appeared in a recipient digest; handling remains pending'}
             channels = [dict(r) for r in tx.connection.execute('SELECT id,native_evidence_json FROM bindings WHERE actor_id=? AND revoked_us IS NULL AND transport=\'mcp\'',
                                                               (actor['id'],))]
         if process_status(process) != 'alive':
@@ -206,6 +229,8 @@ def execute_operation(service, operation):
                 validate_recipient(tx, operation, default_enabled=service.config.wake_enabled)
                 if not _pending(tx, operation):
                     raise CoordinationError('WAKE_HANDLED', 'Recipient handled these messages during native inspection')
+                if not _unpresented(tx, operation):
+                    raise CoordinationError('WAKE_PRESENTED', 'Messages appeared in a recipient digest during native inspection; handling remains pending')
                 tx.connection.execute('UPDATE operations SET effect_started_us=COALESCE(effect_started_us,?) WHERE id=? AND claim_token=?',
                                       (tx.now_us, operation['id'], operation['claim_token']))
 
@@ -218,6 +243,8 @@ def execute_operation(service, operation):
             raise
         if error.code == 'WAKE_HANDLED':
             return {'delivery': 'handled', 'reason': error.message}
+        if error.code == 'WAKE_PRESENTED':
+            return {'delivery': 'already_presented', 'reason': error.message}
         return {'delivery': 'unavailable', 'reason': error.message, 'code': error.code}
 
 

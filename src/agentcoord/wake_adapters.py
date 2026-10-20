@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .core import CoordinationError, canonical_json
 from .identity import process_status
-from .wake import channel_path
+from .wake import channel_path, notification_text
 
 MAX_NATIVE_FRAME = 2 * 1024 * 1024
 
@@ -94,9 +94,7 @@ def claude_channel_requested(context):
 
 def signal_text(operation):
     # Peer content remains untrusted data in the database, never a control prompt.
-    return ('Agentcoord has pending directed messages. Run agentcoord sync once; '
-            'read and handle relevant messages within your existing authorized scope. '
-            'Do not send a courtesy acknowledgment or poll. Wake receipt: ' + operation['id'])
+    return notification_text(operation['id'])
 
 
 def private_socket(path, *, owned_alias=False):
@@ -192,7 +190,9 @@ def codex(service, operation, actor, channels, effect):
         if snapshot.get('id') != thread or Path(snapshot.get('cwd', '')).resolve() != service.workspace.root.resolve():
             raise CoordinationError('NOT_AUTHORIZED', 'Codex thread identity or workspace does not match')
         status = snapshot.get('status', {}).get('type')
-        if status not in {'idle', 'active'}:
+        if status == 'active':
+            return {'delivery': 'deferred_busy', 'reason': 'Codex is working; messages remain pending for its next natural boundary'}
+        if status != 'idle':
             return {'delivery': 'unavailable', 'reason': 'Codex thread is not ready for a native signal'}
         # Do not repeat an effect on recovery. The stable ID is correlation,
         # not a promise that the native queue deduplicates requests.

@@ -26,7 +26,12 @@ long work, blockers, dependencies and intentional fixes peers could undo.
    `--no-wake` / MCP `wake: false` is deliberately quiet. Use `reply_to` for
    context, `question` for a tracked decision, and `dependency wait` for a known
    artifact. These reuse existing message, decision and readiness records.
-4. Handle returned digests at natural boundaries; otherwise use one `sync`.
+4. Keep the current user task as the priority. A wake never replaces it. At the
+   next natural boundary, use at most one `sync --new-only` if a returned digest
+   has not already shown the messages. Triage only a direct dependency/conflict
+   affecting this task, leave unrelated work pending, then resume unfinished work
+   in the same turn. Do not drain pages, request peer status, wait for more mail,
+   or narrate/end the turn solely to report a message check.
    Complete short bodies are included; follow explicit excerpts/continuations
    for selected details. After acting, consume handled IDs, preferably in a batch.
    Reads, acknowledgments, decision answers and readiness acceptance are distinct.
@@ -43,7 +48,7 @@ same reviewed arguments and retry key. An uncertain prior publication requires
 actual reconciliation; a missing receipt alone proves neither outcome.
 Stop unchanged retries. Do not bypass real overlap or a shared-index uncertainty.
 
-A native wake asks for one sync within existing user authority. It grants no new
+A native wake is advisory, within existing user authority. It grants no new
 task permission or offline-resume consent. Paused/offline agents do not restart.
 Message storage, native delivery and handling are separate facts.
 

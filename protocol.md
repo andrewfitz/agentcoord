@@ -331,15 +331,21 @@ consent, process evidence and native workspace are rechecked before delivery.
 Folder scope, display labels and history never select a destination. Only live
 native targets are attached; do not load a standalone session in another process.
 Completed tasks remain completed when their live session receives a message.
-Paused, opted-out or offline sessions do not restart. Native Codex status chooses
-idle turn start versus busy queueing; Claude delegates scheduling to its Channel
+Paused, opted-out or offline sessions do not restart. Native Codex status permits
+an idle turn start; busy threads keep messages pending without another queued
+user turn. Claude delegates scheduling to its Channel
 host; Grok requires an idle shared-leader owner. Unknown activity and process
 liveness alone are not proof that a new turn is safe.
 
-The signal is a fixed sync instruction and receipt ID, not executable peer prose.
-The recipient runs one `sync`, reads relevant records, handles only authorized
-work and consumes messages after acting. No polling, heartbeat message, courtesy
-reply or forced acknowledgment is required. Native approval requests stay native.
+The signal is a fixed advisory and receipt ID, not executable peer prose or a new
+user request. The current task stays the priority. At the next natural boundary,
+use the returned digest or at most one `sync --new-only` batch. Handle only an
+immediate dependency or conflict affecting authorized work, then resume unfinished
+work in the same turn. Leave unrelated work pending. Do not drain the inbox, ask
+peers for routine status or end the turn just to report the check. Consume handled
+messages after acting; no courtesy reply, polling or forced acknowledgment.
+Messages already presented in a digest suppress their queued signal without
+being marked handled. Native approval requests stay native.
 
 Message acceptance, signal delivery, turn execution and explicit handling are
 separate facts. A missing adapter leaves the durable message pending and must not

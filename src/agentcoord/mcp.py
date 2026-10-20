@@ -17,6 +17,7 @@ from mcp.shared.message import SessionMessage
 from .cli import BY_TOOL, CATALOG, invoke, native_context
 from .core import CoordinationError, identifier
 from .transport import MAX_FRAME, Client, error_envelope
+from .wake import notification_text
 
 
 class BoundedInput:
@@ -130,7 +131,7 @@ class ChannelReceiver:
                     if oid not in self.seen:
                         await self.write.send(SessionMessage(types.JSONRPCNotification(
                             jsonrpc='2.0', method='notifications/claude/channel', params={
-                                'content': 'Agentcoord has pending directed messages. Run agentcoord sync once and handle relevant messages within your existing scope. No courtesy acknowledgment or polling.',
+                                'content': notification_text(oid),
                                 'meta': {'wake_id': oid},
                             })))
                         # Bounded same-connection suppression; durable uncertainty

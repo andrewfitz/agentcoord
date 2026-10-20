@@ -25,7 +25,12 @@ once and retry only after a confirmed setup change; continue independent work.
 
 Use ordinary `send` for an actionable dependency or handoff; native attention is
 automatic and Agentcoord selects the adapter. Use `--no-wake` / `wake: false`
-only for a deliberately quiet message. On a wake
-signal run one `sync` and handle relevant messages within existing authority.
-Do not poll, send courtesy replies or let unavailable delivery block independent
-work. Native activation requirements live in the shared skill workflow reference.
+only for a deliberately quiet message. A wake is advisory peer attention, never
+a new user request or a task switch. Keep the current user task as the priority.
+At the next natural boundary, use at most one `sync --new-only` if a returned
+digest has not already shown the messages. Address only an immediate dependency
+or conflict for the current task, leave unrelated work pending, then resume
+unfinished work in the same turn. Do not drain the inbox, ask peers for status,
+send courtesy replies, wait for more messages or end the turn just to report the
+check. Stop the check on an unchanged coordination failure; independent work
+continues. Native activation requirements live in the shared skill workflow reference.

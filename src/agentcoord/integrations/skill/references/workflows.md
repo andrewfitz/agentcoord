@@ -44,9 +44,16 @@ contracts and remaining consumer work rather than substituting for the repair.
 
 ## Natural boundaries and complete content
 
-Handle returned digests at phase/commit/resume boundaries; otherwise use one
-sync. Full short bodies are included. Read selected full records and follow
-explicit continuations when incomplete; do not retrieve all history routinely.
+The current user task remains the priority. A wake is peer attention, never a new
+user request, task switch or reason to end unfinished work. At the next natural
+phase/commit/resume boundary, use the returned digest; otherwise check at most
+one `sync --new-only` batch. Do not drain pages or repeatedly check because more
+messages remain. Read selected details only for a dependency affecting this task.
+Answer only when it changes the recipient's next action; consume informational
+messages without replying. Leave unrelated work pending, then resume unfinished
+work in the same turn without narrating the check to the user. Do not request
+status from peers or start a conversation just because a wake arrived. Full short
+bodies are included; follow explicit continuations only for needed details.
 After acting, consume handled IDs in one batch. Reading never consumes;
 acknowledgment, tracked decision resolution and readiness acceptance are separate.
 Keep unresolved actions pending. No courtesy acknowledgment or inbox polling.
@@ -183,8 +190,11 @@ Admitted MCP connections survive ordinary idle. After a service restart, the
 Channel route currently refreshes on the next successful native tool binding.
 Do not claim automatic idle restart recovery or compensate with heartbeat calls.
 
-A signal asks for one sync within existing authority. Act on relevant records,
-consume handled messages, and continue independent work if delivery is
-unavailable. Completed live sessions can receive messages without reopening task
+A signal is advisory within existing authority. Codex wakes only an idle native
+thread; busy threads keep messages for a natural boundary without another queued
+user turn. A digest that already presented the messages suppresses their queued
+wake without marking them handled. Act only on relevant immediate dependencies,
+consume handled messages, then resume the current task. Continue independent
+work if delivery is unavailable. Completed live sessions can receive messages without reopening task
 authority; paused/offline sessions do not restart. Storage, worker completion,
 native delivery, turn execution and explicit handling remain separate facts.

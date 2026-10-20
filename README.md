@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.16/agentcoord-0.1.16-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.17/agentcoord-0.1.17-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.16/agentcoord-0.1.16-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.17/agentcoord-0.1.17-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -603,8 +603,8 @@ agentcoord send --recipients RECIPIENT_UUID --kind handoff \
 
 MCP: ordinary `send`. Native attention is automatic; Agentcoord chooses the adapter from the
 recipient's authenticated native identity. Senders never choose a harness,
-process, socket or session to execute. Codex's native status determines whether
-to start an idle turn or queue attention behind active work. Claude's native
+process, socket or session to execute. Codex starts an idle turn; busy threads
+keep messages pending without another queued user turn. Claude's native
 Channel host schedules notifications; Grok requires a reported idle shared-leader
 owner because it has no safe busy-session queue. A live process alone does not
 prove idleness. No elapsed-silence heuristic or model polling is used.
@@ -656,16 +656,21 @@ The send receipt confirms database acceptance and lists any queued wake operatio
 IDs or immediate disabled/unsupported results. Inspect a particular result with
 `agentcoord wake get --operation-id UUID`. Delivery states include
 `native_queued`, `turn_started`, `notification_sent`, `turn_completed`,
-`deferred_busy` and `unavailable`. A native signal or completed turn does **not**
+`deferred_busy`, `already_presented` and `unavailable`. A native signal or completed turn does **not**
 prove message handling; `handled_messages` counts explicit recipient consumption.
 
 Messages and wake intents commit atomically in the existing database. Unsent
 bursts coalesce for the same recipient task/execution over a short debounce.
-Self-messages do not wake their sender. Messages already handled before dispatch
-do not start an empty turn.
+Self-messages do not wake their sender. Messages already handled or shown in a
+recipient digest before dispatch do not start another check. Presentation leaves
+unresolved messages pending; it never marks them handled.
 Dispatch checks consent, generations, live process evidence and repository again.
-Signals contain a fixed instruction to sync plus a receipt ID; peer message bodies
-remain data retrieved through tools. No terminal input, extra supervisor, model
+Signals contain a fixed advisory and receipt ID; peer message bodies remain data
+retrieved through tools. The existing user task stays the priority. At a natural
+boundary, use a returned digest or at most one `sync --new-only` batch, handle an
+immediate relevant dependency, then resume unfinished work in the same turn.
+Do not drain the inbox, request routine status or end work to report the check.
+No terminal input, extra supervisor, model
 polling or per-command hooks are involved. Existing operation history and the
 monitor expose wake receipts without another log or state ledger.
 
