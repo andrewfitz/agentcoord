@@ -90,7 +90,7 @@ def _record(tx, row, *, preview=False, paths_after=None, limit=20):
 def activity(service, context, args, tx):
     validate_fields(args, {"task", "paths", "note", "state", "evidence"})
     actor = service.require_actor(tx, context)
-    service.require_generation(tx, actor["id"], context.task_generation)
+    service.require_generation(tx, actor["id"], context.task_generation, context.execution_generation)
     state = args.get("state", "working")
     if state not in STATES:
         _fail("Invalid reported work state")
@@ -108,7 +108,7 @@ def activity(service, context, args, tx):
     inherited_paths = [r[0] for r in tx.connection.execute("SELECT path FROM activity_paths WHERE activity_id=? ORDER BY path", (prior["id"],))] if inherit else []
     scoped = list(normalize_paths(args.get("paths", inherited_paths), allow_root=True))
     if inherit and "paths" in args and scoped != inherited_paths:
-        _fail("Completion scope must equal this task's current activity scope")
+        _fail("Completion paths must equal current activity scope; omit paths to inherit it and record actual outputs in evidence")
     evidence = args.get("evidence", json.loads(prior["evidence_json"]) if inherit else "")
     encoded = canonical_json(evidence)
     if len(encoded.encode()) > 8192:
@@ -120,7 +120,9 @@ def activity(service, context, args, tx):
         if previous_paths == scoped:
             return {"recorded": False, "activity": _record(tx, prior, preview=True)}
     if not shared:
-        actor = identity.assign_task(tx, context, task)
+        actor = identity.assign_task(tx, context, task, begin_completed=(
+            "task" in args and task != actor["task"] and state == "working"
+            and context.identity_mode == "native_owner"))
     elif state not in {"paused", "completed"}:
         unfinished = tx.connection.execute("SELECT COUNT(*) FROM shared_activity_current s JOIN activities a ON a.id=s.activity_id WHERE s.actor_id=? AND a.state NOT IN ('paused','completed')", (actor["id"],)).fetchone()[0]
         if not prior and unfinished >= 256:

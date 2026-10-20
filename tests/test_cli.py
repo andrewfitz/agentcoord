@@ -125,7 +125,7 @@ def test_binary_patch_artifact_keeps_hash_and_rejects_symlink(tmp_path):
     patch.write_bytes(data)
     workspace = SimpleNamespace(root=tmp_path)
     assert prepare_patch_file(workspace, patch) == {
-        "patch_file": "selected.patch",
+        "patch_bytes": data,
         "patch_sha256": hashlib.sha256(data).hexdigest(),
     }
     (tmp_path / "link.patch").symlink_to(patch)
@@ -534,3 +534,121 @@ def test_service_upgrade_previews_until_explicit_application(monkeypatch, tmp_pa
     assert cli._maintenance(args, workspace) == {"applied": apply, "changed": True}
     assert calls[0][:2] == (apply, apply)
     assert calls[0][2].closed
+
+
+def test_trailing_project_and_id_alias():
+    from agentcoord.cli import _normalize_cli_argv
+    value = '11111111-1111-4111-8111-111111111111'
+    args = parser().parse_args(_normalize_cli_argv(['message', '--id', value, '--project', '/tmp/project']))
+    assert args.id == value
+    assert str(args.root) == '/tmp/project'
+
+
+def test_sync_bounds_report_field_and_range():
+    from agentcoord.cli import BY_OPERATION, validate_arguments
+    validate_arguments(BY_OPERATION['message.sync'], {'limit': 20})
+    with pytest.raises(CoordinationError, match='limit.*1 and 20'):
+        validate_arguments(BY_OPERATION['message.sync'], {'limit': 21})
+
+
+def test_external_patch_snapshot_keeps_original_bytes(tmp_path):
+    external = tmp_path / 'external.patch'
+    external.write_bytes(b'original reviewed bytes')
+    workspace = SimpleNamespace(root=tmp_path / 'workspace')
+    captured = prepare_patch_file(workspace, external)
+    external.write_bytes(b'changed after snapshot')
+    assert captured['patch_bytes'] == b'original reviewed bytes'
+
+
+def test_resource_event_uses_same_message_retry_key(monkeypatch, tmp_path, capsys):
+    from agentcoord import cli
+    workspace = SimpleNamespace(root=tmp_path, id='workspace', socket_path=tmp_path / 'sock')
+    monkeypatch.setattr('agentcoord.config.discover_workspace', lambda **kw: workspace)
+    monkeypatch.setattr('agentcoord.config.load_config', lambda workspace: SimpleNamespace(resource_providers={'runner': {}}, native_executables={}))
+    monkeypatch.setattr(cli, 'native_context', lambda *a, **kw: {})
+    event = tmp_path / 'event.json'
+    event.write_text(json.dumps({'event_id': 'one', 'kind': 'terminal', 'status': {'request_id': 'test-one', 'resource': 'cpu', 'state': 'passed', 'holder': None, 'queue_position': None, 'start_deadline': None, 'result': {'exit_code': 0}}}))
+    calls = []
+    class Client:
+        def __init__(self, *a, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def call(self, operation, arguments, key):
+            calls.append((operation, arguments, key))
+            return {'ok': True, 'data': {}}
+    argv = ['resource', 'event', '--provider', 'runner', '--event-file', str(event), '--recipients', MESSAGE_ID]
+    assert cli.main(argv, client_factory=Client) == 0
+    assert cli.main(argv, client_factory=Client) == 0
+    assert calls[0] == calls[1]
+    assert calls[0][0] == 'message.send'
+
+
+def test_resource_status_forwards_optional_request_id(monkeypatch, tmp_path, capsys):
+    from agentcoord import cli
+    workspace = SimpleNamespace(root=tmp_path, id='workspace')
+    provider = {'argv': ['runner', 'status']}
+    monkeypatch.setattr('agentcoord.config.discover_workspace', lambda **kw: workspace)
+    monkeypatch.setattr('agentcoord.config.load_config', lambda workspace: SimpleNamespace(resource_providers={'runner': provider}))
+    calls = []
+    def query(selected, *, cwd, request_id=None):
+        calls.append((selected, cwd, request_id))
+        return {'request_id': request_id}
+    monkeypatch.setattr('agentcoord.resource_provider.query_status', query)
+    for suffix in ([], ['--request-id', 'request-123']):
+        assert cli.main(['resource', 'status', '--provider', 'runner', *suffix]) == 0
+    assert calls == [(provider, tmp_path, None), (provider, tmp_path, 'request-123')]
+
+
+@pytest.mark.parametrize('argv', [
+    ['send', '--body', '--project=/literal'],
+    ['send', '--body', '--project', '/literal'],
+    ['send', '--body=--project=/literal'],
+    ['message', '--', '--project', '/literal'],
+    ['message', '--', '--project=/literal'],
+    ['message', '--project', '--'],
+    ['send', '--body', '--id'],
+])
+def test_global_normalization_preserves_literal_arguments(argv):
+    from agentcoord.cli import _normalize_cli_argv
+    assert _normalize_cli_argv(argv) == argv
+
+
+def test_global_project_normalization_preserves_body_and_boundary():
+    from agentcoord.cli import _normalize_cli_argv
+    assert _normalize_cli_argv(['send', '--body', '--project=/literal', '--project', '/workspace']) == [
+        '--project', '/workspace', 'send', '--body', '--project=/literal']
+    assert _normalize_cli_argv(['message', '--project=/workspace', '--', '--project=/literal']) == [
+        '--project=/workspace', 'message', '--', '--project=/literal']
+
+
+@pytest.mark.parametrize('change', ['same', 'task_after_identity'])
+def test_resource_event_preserves_origin_generation(originating_service, monkeypatch, capsys, tmp_path, change):
+    from test_application import running
+
+    from agentcoord import cli, identity
+    from agentcoord.transport import Client
+    service, _, origin = originating_service
+    event = tmp_path / 'resource-event.json'
+    event.write_text('{}')
+    monkeypatch.setattr('agentcoord.config.load_config', lambda workspace: SimpleNamespace(resource_providers={'runner': {}}, native_executables={}))
+    monkeypatch.setattr('agentcoord.resource_provider.event_message', lambda *args: {
+        'key': 'origin-resource-event', 'params': {'recipients': [origin['actor_id']], 'kind': 'handoff', 'subject': 'Result', 'body': 'Done'}})
+    class RacingClient(Client):
+        def call(self, operation, *args, **kwargs):
+            reply = super().call(operation, *args, **kwargs)
+            if operation == 'identity.get' and change == 'task_after_identity':
+                current = identity.bind_native(service.store, {'harness': 'codex', 'native_session_id': 'origin-native'})['context']
+                with service.store.write() as tx:
+                    identity.assign_task(tx, current, 'new task after event identity lookup')
+            return reply
+    with running(service):
+        status = cli.main(['--project', str(service.workspace.root), '--origin-context', json.dumps(origin),
+                           'resource', 'event', '--provider', 'runner', '--event-file', str(event),
+                           '--recipients', origin['actor_id']], client_factory=RacingClient)
+        reply = json.loads(capsys.readouterr().out)
+        with service.store.read() as tx:
+            count = tx.connection.execute('SELECT COUNT(*) FROM messages').fetchone()[0]
+        if change == 'same':
+            assert status == 0 and reply['ok'] and count == 1
+        else:
+            assert status == 1 and reply['error']['code'] == 'STALE_GENERATION' and count == 0

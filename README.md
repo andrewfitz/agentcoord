@@ -63,7 +63,7 @@ Python and pipx already installed:
 
 ```sh
 pipx install --pip-args='--only-binary=:all:' \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.15/agentcoord-0.1.15-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.16/agentcoord-0.1.16-py3-none-any.whl
 pipx ensurepath
 agentcoord --help
 ```
@@ -78,7 +78,7 @@ For an isolated virtual environment instead:
 ```sh
 python3 -m venv ~/.local/share/agentcoord/venv
 ~/.local/share/agentcoord/venv/bin/python -m pip install --only-binary=:all: \
-  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.15/agentcoord-0.1.15-py3-none-any.whl
+  https://github.com/andrewfitz/agentcoord/releases/download/v0.1.16/agentcoord-0.1.16-py3-none-any.whl
 ```
 
 Put that environment's `bin` directory on `PATH`, or use its absolute
@@ -203,7 +203,8 @@ agentcoord --operator history --limit 20
 agentcoord monitor
 ```
 
-Global options precede the command. Use
+Global options normally precede the command; `--project` is also accepted after
+the subcommand. Use
 `agentcoord --project /absolute/repository COMMAND` from another directory. Inside
 a session with multiple harness contexts, supply the real `--harness codex`,
 `--harness claude`, `--harness cursor` or `--harness grok`; never invent an actor.
@@ -219,8 +220,9 @@ a session with multiple harness contexts, supply the real `--harness codex`,
    result or question, then the affected interface and evidence. Explain fixes
    that must be preserved. Keep ordinary spacing; omit repeated identity JSON,
    long logs, narration and courtesy acknowledgment chains.
-4. For a real blocking decision, use `request-find` before `request`. Follow a
-   covering request instead of duplicating it. Continue independent work while
+4. For a real blocking decision, use `question` for a tracked question and
+   notification in one operation; it reuses an identical open question. Use
+   `request-find` / `request` for more explicit control. Continue independent work while
    the dependent slice waits. Silence, deadlines and offline actors are not answers.
 5. Handle returned action digests at natural work boundaries. `sync` presents
    actions; `message` and `message-batch` read them; `consume` marks handling.
@@ -228,8 +230,9 @@ a session with multiple harness contexts, supply the real `--harness codex`,
    distinct operations.
 6. Publish complete artifact counterparts using `ready` or `handoff` with actual
    evidence. Consumers subscribe, inspect current hashes and accept readiness
-   before dependent integration. Use your test scheduler for scarce devices;
-   messages do not allocate resources.
+   before dependent integration. `dependency wait` subscribes and returns the
+   current receipt in one call; it does not block or poll. Use your test scheduler
+   for scarce devices; messages do not allocate resources.
 7. Review and check owned changes, then use `commit execute`. Only selected paths
    are reserved; the final Git update briefly serializes. Tests never hold the
    commit window. Report a meaningful outcome when work finishes.
@@ -281,6 +284,17 @@ and blocks no work. `evidence` also finds recent completed fixes after owners mo
 on. Discovery uses marked previews; exact notes, evidence and paginated paths
 remain available through `evidence-detail`.
 
+An explicitly named new working task can start directly from a completed task.
+Paused work and unresolved external operations still require explicit recovery.
+Completion inherits the declared scope; record actual output paths in evidence.
+Use `send --reply-to MESSAGE_UUID --recipients RECIPIENT_UUID ...` to preserve
+conversation context. Replies inherit context, never authority or new recipients.
+
+Operator current-work views omit diagnostic-only children with no execution or
+reported work. Imported history stays searchable without appearing as pending
+action. Carryover counts distinguish current tasks, earlier assignments, archived
+recipients and imported history; historical obligations are not silently consumed.
+
 ## Commands and protocol
 
 The [shared command reference](src/agentcoord/integrations/skill/references/commands.md)
@@ -294,8 +308,9 @@ explains overlap, readiness, commits, scheduling and recovery.
 | Report/discover work | `activity`, `activities`, `intent`, `evidence`, `status` |
 | Communicate/handle messages | `send`, `sync`, `message`, `message-batch`, `consume`, `ack` |
 | Inspect conversations | `history`, `search`, `attachments`, `attachment` |
-| Resolve dependencies | `request-find`, `request`, `request-get`, `request-resolve`, `request-follow` |
-| Publish/accept artifacts | `dependency subscribe`, `ready`, `handoff`, `readiness`, `dependency accept` |
+| Resolve dependencies | `question`, `request-find`, `request`, `request-get`, `request-resolve`, `request-follow` |
+| Publish/accept artifacts | `dependency wait`, `dependency subscribe`, `ready`, `handoff`, `readiness`, `dependency accept` |
+| Inspect an existing runner | `resource status`, `resource event` (CLI) |
 | Commit/recover publication | `commit execute`, `commit reconcile`, `operation get`, `receipt` |
 | Report lifecycle or schedule | `checkpoint`, `complete`, `schedule`, `jobs`, `job`, `cancel`, `resolve` |
 | Human inspection | `monitor`, `operator snapshot`, `operator history` |
@@ -325,8 +340,8 @@ copy identity capabilities between agents. Initialization safely merges the
 repository's MCP configuration; manually managed integrations must keep the same
 workspace and native harness identity.
 
-`.agentcoord.toml` accepts optional `[limits]`, `[native]`, `[storage]` and
-`[version]` sections. Defaults already bound queues, frames and action digests;
+`.agentcoord.toml` accepts optional `[limits]`, `[native]`, `[storage]`,
+`[resources.providers.NAME]` and `[version]` sections. Defaults bound queues, frames and action digests;
 start with them. For a repository with a plain version file, an optional bump
 rule looks like:
 
@@ -341,6 +356,32 @@ validate = 'version = \d+\.\d+\.\d+'
 
 Only `commit execute --bump-version` requests that configured bump. Agentcoord
 does not impose versioning, test admission or a product-specific commit policy.
+
+### Connect an existing resource runner
+
+An optional provider reads the real runner's status, without creating a second
+queue or reservation ledger. Configure a bounded no-shell command that outputs
+one JSON object:
+
+```toml
+[resources.providers.tests]
+argv = ["/absolute/path/to/runner-status"]
+timeout_seconds = 10
+```
+
+```sh
+agentcoord resource status --provider tests --request-id REQUEST_ID
+agentcoord resource event --provider tests --event-file /absolute/path/to/result.json \
+  --recipients RECIPIENT_UUID
+```
+
+The request ID is appended as one literal argument. Status fields are `request_id`,
+`resource`, `state`, `holder`, `queue_position`, `start_deadline` and `result`.
+Unsupported scheduler facts stay null. Terminal events use ordinary idempotent
+directed messaging; the runner's existing completion flow invokes the event command.
+No watcher or periodic agent status check is needed. See the
+[command reference](src/agentcoord/integrations/skill/references/commands.md) for
+the provider contract.
 
 The local OS user is the trust boundary. Private sockets and native bindings
 prevent accidental identity mixing; they do not sandbox hostile code executing

@@ -881,6 +881,8 @@ def execute_operation(
                               else "os_error" if isinstance(error, OSError)
                               else "coordination" if isinstance(error, CoordinationError) else "validation",
                               "operation_id": operation["id"]}
+        if getattr(error, "cleanup_error", None):
+            failure["details"]["cleanup_error"] = error.cleanup_error
         diagnostic = _failure_diagnostic(service, operation, error)
         if diagnostic:
             failure["details"]["diagnostic_log"] = diagnostic
@@ -911,6 +913,10 @@ def execute_operation(
             if log.is_file():
                 failure["details"]["diagnostic_log"] = str(log)
         if failure:
+            if prepared.get("ref_update", {}).get("outcome") == "rejected_before_commit":
+                failure["code"] = "COMMIT_REJECTED"
+                failure["details"]["ref_update"] = prepared["ref_update"]
+                failure["next_action"] = "Git rejected publication before commit; review the current HEAD and selected changes before a new request."
             failure["details"].update(phase=failure["details"].get("phase", prepared.get("phase", "selection")),
                                       publication="published" if prepared.get("published_commit") else "uncertain" if uncertain else "not_published")
             if uncertain:
@@ -1123,6 +1129,7 @@ def _reconcile_git(root, prepared: dict) -> dict:
         if reachable == 1:
             if (
                 commit
+                and prepared.get("ref_update", {}).get("outcome") != "rejected_before_commit"
                 and git("rev-parse", "HEAD").stdout.decode().strip()
                 != prepared["base_commit"]
             ):
@@ -1388,6 +1395,7 @@ def _execute_git(
         raise ValueError("Grant ID missing; inspect commit status before recovery")
     outcome = None
     published = False
+    primary_error = None
     try:
         with tempfile.TemporaryDirectory(
             prefix="agentcoord-index-", dir=git_dir
@@ -1710,14 +1718,25 @@ def _execute_git(
                             else None,
                         },
                     )
-                    git(
-                        "update-ref",
-                        "-m",
-                        marker + ": " + subject,
-                        "HEAD",
-                        receipt,
-                        head,
-                    )
+                    # Git's explicit transaction acknowledgments distinguish a
+                    # rejected prepare from an interrupted publication. Never
+                    # infer nonpublication merely from HEAD or a missing receipt.
+                    try:
+                        git(
+                            "update-ref", "--stdin", "-m", marker + ": " + subject,
+                            data=(f"start\nupdate HEAD {receipt} {head}\nprepare\ncommit\n").encode(),
+                        )
+                    except ValueError as error:
+                        cause = error.__cause__
+                        if (isinstance(cause, subprocess.CalledProcessError)
+                                and cause.returncode > 0
+                                and b"start: ok\n" in (cause.stdout or b"")
+                                and b"prepare: ok\n" not in (cause.stdout or b"")
+                                and b"commit: ok\n" not in (cause.stdout or b"")):
+                            progress("publication_rejected", {"ref_update": {
+                                "outcome": "rejected_before_commit", "exit_code": cause.returncode,
+                            }})
+                        raise
                     published = True
                     outcome = {
                         "code": 0,
@@ -1753,6 +1772,7 @@ def _execute_git(
                     if owns_shared_lock:
                         shared_lock.unlink(missing_ok=True)
     except (OSError, ValueError, CoordinationError) as error:
+        primary_error = error
         if not published:
             raise
         outcome = {
@@ -1770,14 +1790,22 @@ def _execute_git(
                 outcome["release"] = release
         except (OSError, ValueError, CoordinationError) as error:
             if outcome is None:
-                raise
-            outcome.update(
-                code=2,
-                release_pending=True,
-                release_error=str(error),
-                next_action=(
-                    f"Git succeeded. Review the receipt and release only --grant-id {grant_id}; "
-                    "do not retry the commit."
-                ),
-            )
+                if primary_error is None:
+                    raise
+                primary_error.add_note("Git grant cleanup also failed: " + str(error))
+                primary_error.cleanup_error = {
+                    "code": getattr(error, "code", "OPERATION_FAILED"),
+                    "message": "Git grant cleanup also failed; inspect the private diagnostic",
+                }
+            else:
+                outcome.update(
+                    code=2,
+                    release_pending=True,
+                    release_error=str(error),
+                    next_action=(
+                        ("Git succeeded; do not retry publication. " if outcome.get("committed")
+                         else "Git did not publish the selected commit. ")
+                        + f"Review the receipt and release only --grant-id {grant_id}."
+                    ),
+                )
     return outcome

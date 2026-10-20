@@ -148,6 +148,29 @@ def subscribe(service, context, args, tx):
     return dict(tx.connection.execute("SELECT * FROM subscriptions WHERE id=?", (subscription_id,)).fetchone())
 
 
+def wait(service, context, args, tx):
+    """Register interest and inspect the matching update in one transaction."""
+    subscription = subscribe(service, context, args, tx)
+    row = tx.connection.execute("""SELECT u.id,u.receipt_id,u.accepted_us FROM dependency_updates u
+        WHERE u.subscription_id=? ORDER BY u.sequence DESC LIMIT 1""", (subscription["id"],)).fetchone()
+    receipt = public_receipt(_receipt(tx, row["receipt_id"])) if row else None
+    can_accept = False
+    unavailable_reason = None
+    if row and row["accepted_us"] is None:
+        try:
+            _validate_update(service, tx, context, _update(tx, row["id"], context.actor_id),
+                             _receipt(tx, row["receipt_id"]))
+            can_accept = True
+        except CoordinationError as error:
+            if error.code not in {"STALE_VERSION", "STALE_GENERATION"}:
+                raise
+            unavailable_reason = error.message
+    return {"subscription": subscription, "update_id": row["id"] if row else None,
+            "receipt": receipt, "accepted": bool(row and row["accepted_us"] is not None),
+            "unavailable_reason": unavailable_reason,
+            "next_action": "readiness.accept" if can_accept else "continue_independent_work"}
+
+
 def cancel(service, context, args, tx):
     validate_fields(args, {"id"}, {"id"})
     service.require_actor(tx, context)
@@ -597,6 +620,6 @@ def slow_handlers():
 
 def operations():
     return tuple(Operation(name, handler, True, True, True) for name, handler in (
-        ("readiness.subscribe", subscribe), ("readiness.cancel", cancel), ("readiness.publish", publish),
+        ("readiness.subscribe", subscribe), ("readiness.wait", wait), ("readiness.cancel", cancel), ("readiness.publish", publish),
         ("readiness.withdraw", withdraw), ("readiness.accept", accept), ("readiness.handoff", handoff),
         ("readiness.inspect", inspect))) + (Operation("readiness.updates", updates, False, False, True),)

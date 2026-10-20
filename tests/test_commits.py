@@ -462,6 +462,34 @@ def test_ref_compare_and_swap_preserves_competing_commit(repo):
     assert git(repo, "show", "HEAD:owned.txt") == b"before\n"
 
 
+def test_rejected_ref_and_cleanup_failure_keep_both_causes_and_recover(repo):
+    prepared = {}
+    peer = {}
+    (repo / "peer.txt").write_text("peer staged\n")
+    git(repo, "add", "peer.txt")
+    index = git(repo, "ls-files", "--stage")
+
+    def progress(phase, values):
+        prepared.update(values, phase=phase)
+        if phase == "publishing":
+            head = git(repo, "rev-parse", "HEAD").decode().strip()
+            oid = git(repo, "commit-tree", head + "^{tree}", "-p", head,
+                      data=b"peer publication\n").decode().strip()
+            git(repo, "update-ref", "HEAD", oid)
+            peer["oid"] = oid
+
+    with pytest.raises(ValueError, match="update-ref failed") as failure:
+        execute(repo, control=Control(release_error=True), progress=progress)
+    assert failure.value.cleanup_error["code"] == "OPERATION_FAILED"
+    assert any("cleanup also failed" in note for note in failure.value.__notes__)
+    assert prepared["phase"] == "publication_rejected"
+    assert prepared["ref_update"]["outcome"] == "rejected_before_commit"
+    assert not commits._reconcile_git(repo, prepared)["committed"]
+    assert git(repo, "rev-parse", "HEAD").decode().strip() == peer["oid"]
+    assert git(repo, "ls-files", "--stage") == index
+    assert (repo / "owned.txt").read_text() == "after\n"
+
+
 @pytest.fixture
 def admission_store(tmp_path):
     from agentcoord.store import Store
@@ -771,6 +799,36 @@ def test_postpublication_worker_fault_requires_and_reconciles_exact_receipt(
     assert recovered["result"]["commit"] == result["result"]["commit"]
     assert git(service.workspace.root, "rev-list", "--count", "HEAD") == b"2\n"
     assert (service.workspace.root / "version.txt").read_text() == "version = 1.2.4\n"
+    with service.store.read() as tx:
+        assert not commits.status(tx, context.actor_id)["held_by_you"]
+
+
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_native_rejected_transaction_ends_without_uncertain_grant(native_service, monkeypatch, cleanup_fails):
+    service, context = native_service
+    root = service.workspace.root
+    accepted = enqueue_commit(native_service)
+    peer = {}
+
+    def race(phase):
+        if phase == "publishing":
+            head = git(root, "rev-parse", "HEAD").decode().strip()
+            peer["oid"] = git(root, "commit-tree", head + "^{tree}", "-p", head,
+                              data=b"peer ahead\n").decode().strip()
+            git(root, "update-ref", "HEAD", peer["oid"])
+
+    if cleanup_fails:
+        def reject_release(self, grant_id):
+            raise ValueError("cleanup unavailable")
+        monkeypatch.setattr(commits._Control, "release", reject_release)
+    service.adapters["slow_handlers"]["commit.execute"] = lambda srv, op: commits.execute_operation(srv, op, fault=race)
+    result = service.run_operation(accepted["operation_id"])
+    assert result["state"] == "failed", result
+    assert result["error"]["code"] == "COMMIT_REJECTED"
+    assert result["error"]["details"]["category"] == "git_command"
+    assert bool(result["error"]["details"].get("cleanup_error")) == cleanup_fails
+    assert result["error"]["details"]["publication"] == "not_published"
+    assert git(root, "rev-parse", "HEAD").decode().strip() == peer["oid"]
     with service.store.read() as tx:
         assert not commits.status(tx, context.actor_id)["held_by_you"]
 

@@ -107,8 +107,9 @@ def test_digest_identifies_sender_and_marks_actual_truncation(runtime):
     assert previews[short]["thread"] == "parser"
     assert previews[short]["summary"] == "Preserve the parser fix."
     assert previews[short]["summary_excerpt"] is False
-    assert previews[long]["summary_excerpt"] is True
-    assert len(previews[long]["summary"]) == 360
+    assert previews[long]["summary_excerpt"] is False
+    assert previews[long]["body"] == "A" * 500
+    assert len(previews[long]["summary"]) == 500
     assert previews[unicode_id]["summary_excerpt"] is True
     assert len(previews[unicode_id]["summary"].encode()) <= 720
 

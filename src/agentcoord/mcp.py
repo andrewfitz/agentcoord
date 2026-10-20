@@ -85,13 +85,14 @@ class ChannelReceiver:
     async def start(self, *, bound=False):
         async with self.lock:
             revision = getattr(self.client, 'binding_revision', None)
-            if self.listener and revision != self.revision:
+            if self.attempted and revision != self.revision:
                 await self.close()
                 self.listener = self.path = self.route = None
                 self.attempted = False
             if self.listener or (self.attempted and not (bound and self.retry_after_bind)):
                 return
             self.attempted = True
+            self.revision = revision
             self.retry_after_bind = False
             try:
                 reply = await anyio.to_thread.run_sync(lambda: self.client.call('wake.channel', {}, key=str(uuid.uuid4())))

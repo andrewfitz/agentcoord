@@ -82,11 +82,31 @@ never treat a preview as the complete scope or evidence. Use
 `--paths-after` for complete path pages. Readiness details retain complete evidence.
 Repeating an identical intent does not append another event or change its timestamp.
 
+A native owner can start an explicitly named new working task from completed
+state in one activity operation. Pause and unresolved external-effect protections
+remain. Completion inherits declared scope when omitted; actual output paths can
+be supplied as evidence instead of redefining that scope.
+
 Selected messages may be read together with `message-batch`. The bounded response
 has explicit `next_index` over the same ID list and each body's `next_offset`;
 neither reading nor pagination handles messages. Previews expose sender, subject,
 thread and body bytes, and mark incomplete summaries. CLI/MCP JSON omits optional
 formatting whitespace while preserving all content, fields and recovery receipts.
+
+Short bodies can be complete in the digest; truncated content has an explicit
+continuation. Imported history stays readable but is excluded from actionable
+pending lists and counts. Operator carryover views retain prior-assignment and
+archived-recipient obligations separately. Diagnostic-only children without a
+current execution or current-generation activity do not populate current work.
+
+`send` with `reply_to` requires access to the original and inherits its thread,
+scope and context. Recipients remain explicit and authority never transfers.
+An unthreaded original uses a stable message-based thread. `decision.question`
+creates a tracked question plus notification atomically, or reuses an exactly
+matching open question with the same current sender/recipient generations,
+scope, text and deadline. `readiness.wait` subscribes and returns the current
+receipt in one transaction; stale or incomplete receipts remain unavailable.
+Neither operation blocks the agent or polls.
 
 Before creating a blocking request, find relevant open decisions and follow one
 that covers the actual dependency. Followers acquire no answer or edit authority.
@@ -169,6 +189,17 @@ phase and publication state. Arbitrary exception prose stays in a private local
 diagnostic referenced by the receipt; hook output stays in service stderr.
 Reconcile uncertain publication before retrying. Commits do not submit or await tests.
 
+Git ref publication uses an explicit prepare/commit transaction. Proven rejection
+before commit is distinguished from unknown publication, even if another writer
+advanced HEAD. Missing receipts or changed history alone never prove rejection.
+Cleanup errors remain separate from the original error and cannot mask it.
+
+The CLI may read a reviewed patch outside the workspace, snapshot and hash its
+bytes, then submit through the existing patch engine. It never grants the daemon
+arbitrary external file access. Large or non-UTF8 snapshots require explicit local
+execution; changed Git paths remain restricted to the selected workspace and
+reviewed base. Retry identity includes the exact snapshot bytes.
+
 Coordination outages do not veto independent edits, checks or authorized commits.
 An adapter-only failure can use the installed CLI. `commit execute` automatically
 uses local Git when connection or native binding fails before the request is sent.
@@ -225,6 +256,13 @@ sessions are never terminated by service installation or upgrade.
 
 ## Installation and operator inspection
 
+Optional configured resource providers execute a bounded no-shell JSON status
+command against an existing runner. The runner remains the sole scheduler.
+Unsupported holder, queue-position and start-deadline facts remain null. Its
+existing result flow can submit one stable-key resource event through ordinary
+authenticated directed messaging. Agentcoord adds no watcher, reservation ledger
+or inferred grant. The feature is inert until explicitly configured.
+
 `init` previews setup; `init --apply` registers the workspace, writes optional
 project configuration and marked instruction snippets, installs the shared
 `.agents/skills/agentcoord/SKILL.md` and safely merges selected harness project
@@ -265,6 +303,13 @@ work, dependencies, jobs, failures and searchable paged durable history. Operato
 reads never present or consume agent messages. `doctor` separates configuration,
 connection, binding, database health and observed lifecycle; configured or
 reachable does not prove every open harness has reloaded its integration.
+
+Admitted native MCP sockets survive ordinary idle periods. A disconnected socket
+can reconnect before a new request; an uncertain sent request is never replayed
+automatically. After a daemon restart, an idle Claude Channel requires its next
+successful native tool binding to register again. Health reports actual current
+Channel registrations and bounded passive socket observations separately from
+unknown host activation; configuration alone does not establish delivery.
 
 The local OS user is the trust boundary. Private state/socket permissions and
 native capabilities prevent accidental cross-session or cross-workspace access;

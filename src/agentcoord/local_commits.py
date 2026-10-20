@@ -150,7 +150,7 @@ class _Control:
         return {"released": True, "mode": "local"}
 
 
-def execute(workspace, args, key, report=None):
+def execute(workspace, args, key, report=None, *, patch_bytes=None):
     """Return an envelope; report receives human-readable Git progress strings."""
     emit = report or (lambda message: None)
     receipt = None
@@ -163,7 +163,14 @@ def execute(workspace, args, key, report=None):
         commits._fields(args, {"paths", "message", "bump_version", "adopt_staged", "patch", "patch_file", "patch_sha256", "base_commit"}, {"paths", "message"})
         paths = commits._paths(args["paths"])
         config = load_config(workspace)
-        patch = commits._read_patch(workspace.root, args)
+        if patch_bytes is not None:
+            if (not isinstance(patch_bytes, bytes) or not 0 < len(patch_bytes) <= 16 * 1024 * 1024
+                    or args.get("patch") is not None or args.get("patch_file") is not None
+                    or args.get("patch_sha256") is not None or args.get("base_commit") is None):
+                raise ValueError("Local patch snapshot requires bounded bytes, a reviewed base and no second patch source")
+            patch = patch_bytes
+        else:
+            patch = commits._read_patch(workspace.root, args)
         fingerprint = hashlib.sha256(commits._json({
             "arguments": dict(args, paths=paths),
             "patch_sha256": hashlib.sha256(patch).hexdigest() if patch is not None else None,
@@ -252,7 +259,9 @@ def execute(workspace, args, key, report=None):
             except (OSError, ValueError, CoordinationError) as error:
                 if state.get("published_commit") or state.get("phase") in {"publishing", "published", "reconciled", "finished"}:
                     return error_envelope("RECONCILIATION_REQUIRED", str(error), details={"receipt": str(receipt), "phase": state["phase"]}, next_action="Inspect HEAD, reflog and the shared index using the durable local receipt; do not repeat publication")
-                envelope = error_envelope(error.code if isinstance(error, CoordinationError) else "COMMIT_REJECTED", str(error), next_action="Review selected Git paths and correct the concrete failure before a new reviewed request")
+                envelope = error_envelope(error.code if isinstance(error, CoordinationError) else "COMMIT_REJECTED", str(error),
+                                          details={"cleanup_error": error.cleanup_error} if getattr(error, "cleanup_error", None) else None,
+                                          next_action="Review selected Git paths and correct the concrete failure before a new reviewed request")
                 state.update(envelope=envelope, phase="rejected")
                 _write(receipt, state)
                 return envelope

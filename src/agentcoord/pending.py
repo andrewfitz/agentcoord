@@ -75,6 +75,9 @@ def _preview(action):
     summary = str(action.get("summary", ""))
     encoded = summary.encode("utf-8")
     result["summary"] = encoded[:720].decode("utf-8", errors="ignore")
+    if action.get("kind") == "message" and not action.get("summary_excerpt") and len(encoded) <= 720:
+        result["body"] = summary
+        result["next_offset"] = None
     if len(encoded) > 720:
         result["summary_excerpt"] = True
     return result

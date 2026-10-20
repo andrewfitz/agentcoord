@@ -9,6 +9,7 @@ import os
 import signal
 import socket
 import sqlite3
+import stat
 import threading
 import time
 from pathlib import Path
@@ -389,6 +390,20 @@ def make_server(service):
             )
             manual = tx.connection.execute("""SELECT COUNT(*) FROM commit_grants g JOIN commit_admissions a ON a.id=g.admission_id
                 WHERE g.state IN ('active','uncertain') AND a.mode='manual'""").fetchone()[0]
+            channel_sql = """FROM bindings b JOIN actors a ON a.id=b.actor_id
+                WHERE b.revoked_us IS NULL AND b.transport='mcp' AND a.harness='claude'
+                AND a.child_id='' AND a.archived=0 AND a.current_execution_generation IS NOT NULL
+                AND json_extract(b.native_evidence_json,'$.wake_channel.execution_generation')=a.current_execution_generation"""
+            registered = tx.connection.execute('SELECT COUNT(*) ' + channel_sql).fetchone()[0]
+            channel_ids = [row[0] for row in tx.connection.execute('SELECT b.id ' + channel_sql + ' ORDER BY b.id LIMIT 256')]
+        # Filesystem presence is passive evidence, not a connection probe or a
+        # claim that the host accepted the Channel capability.
+        present = 0
+        for binding_id in channel_ids:
+            try:
+                present += stat.S_ISSOCK(wake.channel_path(service.workspace, binding_id).lstat().st_mode)
+            except OSError:
+                pass
         return {
             "schema_version": SCHEMA_VERSION,
             "release": __version__,
@@ -398,6 +413,11 @@ def make_server(service):
             "maintenance_error": runtime.error if runtime else None,
             "storage": service.store.storage_status(),
             "storage_maintenance_error": runtime.storage_error if runtime else None,
+            "wake": {"claude": {"registered_current_channels": registered,
+                                "endpoint_socket_present_channels": present,
+                                "endpoints_examined": len(channel_ids),
+                                "endpoint_inspection_truncated": registered > len(channel_ids)},
+                     "host_activation": "unknown"},
         }
 
     def restore_activation():

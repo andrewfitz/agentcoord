@@ -755,3 +755,30 @@ def test_interleaved_uncertainty_is_compacted_per_execution_without_state_effect
         identity.start_execution(tx, owner, native_run_id='new-execution')
         identity.apply_lifecycle_event(tx, owner, state='completed', execution_generation=None, event='stop')
         assert tx.connection.execute("SELECT COUNT(*) FROM events WHERE actor_id=? AND kind='ambiguous_event'", (owner.actor_id,)).fetchone()[0] == 4
+
+
+def test_activity_begins_named_new_task_after_completion(runtime):
+    first = call(runtime, 0, 'work.activity', {'task': 'first', 'paths': ['src/a'], 'note': 'First'})
+    call(runtime, 0, 'work.activity', {'state': 'completed'})
+    old_generation = first['activity']['task_generation']
+    result = call(runtime, 0, 'work.activity', {'task': 'authorized next', 'paths': ['src/b'], 'state': 'working', 'note': 'Next'})
+    assert result['activity']['task_generation'] != old_generation
+    assert result['activity']['paths'] == ['src/b']
+
+
+def test_activity_cannot_bypass_explicit_pause(runtime):
+    call(runtime, 0, 'work.activity', {'task': 'first', 'note': 'First', 'state': 'paused'})
+    result = call(runtime, 0, 'work.activity', {'task': 'next', 'note': 'Next'}, ok=False)
+    assert result['code'] == 'NOT_AUTHORIZED'
+
+
+def test_stop_only_child_never_invents_execution(runtime):
+    service, _ = runtime
+    binding = identity.bind_native(service.store, {'harness': 'claude', 'native_session_id': 'stop-only-session', 'child_id': 'native-child'}, transport='hook')
+    child = identity.context_from_token(service.store, binding['token'])
+    for _ in range(2):
+        result = service.execute(child, Call('identity.event', {'event': 'child_stop', 'state': 'completed'}, uid()))
+        assert result['ok'] and result['data']['reason'] == 'ambiguous_generation'
+    with service.store.read() as tx:
+        assert tx.connection.execute('SELECT COUNT(*) FROM executions WHERE actor_id=?', (child.actor_id,)).fetchone()[0] == 0
+        assert tx.connection.execute("SELECT COUNT(*) FROM events WHERE actor_id=? AND kind='ambiguous_event'", (child.actor_id,)).fetchone()[0] == 1

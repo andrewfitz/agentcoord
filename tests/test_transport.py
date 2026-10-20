@@ -360,3 +360,25 @@ def test_partial_operation_send_remains_uncertain(monkeypatch, tmp_path):
     assert retry["error"]["details"]["request_started"] is False
     assert retry["error"]["details"]["effect_not_started"] is False
     assert retry["error"]["details"]["prior_request_uncertain"] is True
+
+
+def test_idle_mcp_binding_survives_beyond_timeout(tmp_path):
+    released = threading.Event()
+    with running(tmp_path, idle_timeout=0.03, unbind=lambda _: released.set()) as (_, service, bindings, path):
+        with Client(path, {"native_session_id": "native-a"}, workspace_id="workspace", transport="mcp") as client:
+            assert not released.wait(0.1)
+            assert client.call("write", key="idle-write")["ok"]
+            assert len(bindings) == 1
+        assert released.wait(1)
+        assert len(service.calls) == 1
+
+
+def test_confirmed_idle_disconnect_rebinds_before_new_mutation(tmp_path):
+    released = threading.Event()
+    with running(tmp_path, idle_timeout=0.03, unbind=lambda _: released.set()) as (_, service, bindings, path):  # noqa: SIM117 — separate bound connection lifetime.
+        with Client(path, {"native_session_id": "native-a"}, workspace_id="workspace") as client:
+            assert released.wait(1)
+            client.native_context["native_session_id"] = "injected"
+            assert client.call("write", key="unsent-write")["ok"]
+            assert len(service.calls) == 1
+            assert bindings == [{"native_session_id": "native-a"}] * 2

@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import secrets
+import select
 import socket
 import socketserver
 import stat
@@ -143,7 +144,11 @@ class Client:
 
     def connect(self):
         if self._socket is not None:
-            return self
+            # Inspect only before dispatch. EOF proves this new request has not
+            # been sent; response loss after send remains uncertain.
+            if not self._disconnected():
+                return self
+            self.close()
         private_directory(self.path.parent)
         connection = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         connection.settimeout(self.timeout)
@@ -202,6 +207,16 @@ class Client:
             connection.close()
             raise
         return self
+
+    def _disconnected(self):
+        connection = self._socket
+        if connection is None:
+            return True
+        try:
+            readable, _, _ = select.select([connection], [], [], 0)
+            return bool(readable) and not connection.recv(1, socket.MSG_PEEK)
+        except OSError:
+            return True
 
     @property
     def binding_revision(self):
@@ -764,6 +779,10 @@ class _Handler(socketserver.StreamRequestHandler):
                     }
                 )
             )
+            # An admitted MCP session can own a native push route while idle.
+            # Keep its binding until real disconnect, within connection bounds.
+            if frame["transport"] == "mcp":
+                self.request.settimeout(None)
             while True:
                 reply = self.server.dispatch(context, read_frame(self.rfile))
                 self.wfile.write(encode_frame(reply))

@@ -127,6 +127,38 @@ def request(service, context, args, tx):
     return decision
 
 
+def question(service, context, args, tx):
+    """Reuse only an identical current request; scope overlap is never coverage."""
+    validate_fields(args, {"recipient", "subject", "body", "paths", "deadline_us"},
+                    {"recipient", "subject", "body", "paths"})
+    sender = _actor(service, tx, context)
+    recipient = messages.actor(tx, args["recipient"])
+    if recipient["archived"] or recipient["id"] == sender["id"]:
+        _fail("A request requires a different current recipient")
+    scoped = normalize_paths(args["paths"], allow_root=True)
+    if not scoped:
+        _fail("A decision requires explicit scope")
+    # Validate before reuse too: malformed inputs must not bypass request validation.
+    bounded_text(args["subject"], "subject", 1024)
+    bounded_text(args["body"], "body", 65536)
+    if "deadline_us" in args:
+        integer(args["deadline_us"], "deadline_us", tx.now_us, tx.now_us + 7*86400*1_000_000)
+    rows = tx.connection.execute("""SELECT d.* FROM decisions d WHERE d.state='open'
+        AND d.sender_id=? AND d.recipient_id=? AND d.recipient_task_generation=?
+        AND d.task=? AND d.subject=? AND d.body=?
+        AND EXISTS (SELECT 1 FROM decision_notifications n JOIN messages m ON m.id=n.message_id
+            WHERE n.decision_id=d.id AND n.kind='request' AND m.sender_task_generation=?)
+        ORDER BY d.sequence""",
+        (sender["id"], recipient["id"], recipient["current_task_generation"],
+         sender["task"], args["subject"], args["body"], sender["current_task_generation"])).fetchall()
+    for row in rows:
+        owned = [p[0] for p in tx.connection.execute(
+            "SELECT path FROM decision_paths WHERE decision_id=? ORDER BY path", (row["id"],))]
+        if row["deadline_us"] >= tx.now_us and sorted(scoped) == owned and ("deadline_us" not in args or args["deadline_us"] == row["deadline_us"]):
+            return {**dict(row), "reused": True}
+    return {**request(service, context, args, tx), "reused": False}
+
+
 def _can_answer(tx, decision, actor_id):
     if actor_id == decision["recipient_id"]:
         return True
@@ -517,7 +549,7 @@ def listing(service, context, args, tx):
 
 def operations():
     return tuple(Operation(name, handler, mutation, mutation, not name.endswith(".get")) for name, handler, mutation in (
-        ("decision.request", request, True), ("decision.find", find, False), ("decision.get", get, False),
+        ("decision.request", request, True), ("decision.question", question, True), ("decision.find", find, False), ("decision.get", get, False),
         ("decision.list", listing, False), ("decision.follow", follow, True), ("decision.unfollow", unfollow, True),
         ("decision.defer", defer, True), ("decision.resolve", resolve, True), ("decision.reconcile", reconcile, True),
         ("decision.transfer", transfer, True)))

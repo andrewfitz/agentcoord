@@ -128,6 +128,26 @@ def test_local_patch_preserves_peer_staging(workspace):
     assert git(workspace.root, "show", ":peer") == b"peer staged\n"
 
 
+def test_local_binary_patch_snapshot_replays_and_binds_bytes(workspace):
+    target = workspace.root / "owned"
+    target.write_bytes(b"before\x00\xff\n")
+    git(workspace.root, "add", "owned")
+    git(workspace.root, "commit", "-qm", "binary baseline", "--", "owned")
+    base = git(workspace.root, "rev-parse", "HEAD").decode().strip()
+    target.write_bytes(b"after\x00\xfe\n")
+    patch = git(workspace.root, "diff", "--binary", "--", "owned")
+    args = arguments(base_commit=base)
+    reply = local_commits.execute(workspace, args, "binary-snapshot", patch_bytes=patch)
+    assert reply["ok"], reply
+    assert git(workspace.root, "show", "HEAD:owned") == b"after\x00\xfe\n"
+    assert git(workspace.root, "show", ":peer") == b"peer staged\n"
+    head = git(workspace.root, "rev-parse", "HEAD")
+    assert local_commits.execute(workspace, args, "binary-snapshot", patch_bytes=patch) == reply
+    changed = local_commits.execute(workspace, args, "binary-snapshot", patch_bytes=patch + b"\n")
+    assert changed["error"]["code"] == "IDEMPOTENCY_CONFLICT"
+    assert git(workspace.root, "rev-parse", "HEAD") == head
+
+
 def test_local_version_synthesis_replays_without_second_bump(workspace, monkeypatch):
     version = workspace.root / "version.txt"
     version.write_text("version = 1.2.3\n")

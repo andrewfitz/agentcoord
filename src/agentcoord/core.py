@@ -89,7 +89,8 @@ def identifier(value, label: str = "ID") -> str:
 
 def integer(value, label: str, minimum: int, maximum: int) -> int:
     if type(value) is not int or not minimum <= value <= maximum:
-        raise CoordinationError("INVALID_ARGUMENT", f"{label} must be an integer in {minimum}..{maximum}")
+        raise CoordinationError("INVALID_ARGUMENT", f"{label} must be an integer in {minimum}..{maximum}",
+                                details={"field": label, "minimum": minimum, "maximum": maximum})
     return value
 
 
@@ -99,6 +100,9 @@ def normalize_paths(values, *, allow_root: bool = False) -> tuple[str, ...]:
     result = set()
     for value in values:
         value = bounded_text(value, "path", 4096)
+        # Normalize a folder's trailing separator, preserving strict checks for
+        # absolute paths, traversal and repeated interior separators.
+        value = value.rstrip("/") if not value.startswith("/") else value
         if value in {".", ""} and allow_root:
             result.add(".")
             continue

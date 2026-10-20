@@ -1,201 +1,124 @@
-# Command selection
+# Agentcoord command reference
 
-Use `agentcoord --help`, `agentcoord COMMAND --help` or
-`agentcoord FAMILY COMMAND --help` for the installed syntax. Global options go
-before the subcommand: `--project /absolute/repository`, `--harness HARNESS`,
-`--operator` and `--origin-context JSON`. Use the actual IDs, generations,
-continuations and retry keys returned by the service; examples below contain no
-invented identities. These are routing notes, not a duplicate argument schema.
+Run in the checkout or use global `--project /absolute/repository` (also accepted
+after the subcommand). Installed help owns exact syntax. CLI names below map to
+the same underscore-named MCP operations unless stated CLI-only.
 
 ## Identity and reported work
 
-| Command | When to use it |
-| --- | --- |
-| `identity` | Inspect the native caller and its attribution limits. |
-| `delegate` | Explicitly consent to scoped parent routing for an independently registered child; it does not create a child identity. |
-| `checkpoint` | Record a meaningful pause/state checkpoint and an explicit resume preference. Only enable resume with user consent. |
-| `complete` | Explicitly finish the bound actor's work. |
-| `status` | Inspect observed presence separately from reported task state; use pagination for broader inspection. |
-| `activity` | Report a meaningful scope, blocker, handoff or outcome once. |
-| `activities` | Find current reported scopes by paths before overlapping changes; use `--no-current` for history. Neither view proves presence or ownership. |
-| `intent` | Record a change's purpose and invariants when that context helps peers, without reserving edits. |
-| `evidence` | Find existing intent, outcomes and evidence for affected paths before asking another owner. |
-| `evidence-detail` | Retrieve a complete selected evidence record using its returned kind/ID and continuation. |
-
-```sh
-agentcoord activity --task parser-repair --paths src/parser --state working --note 'Preserve escaped delimiters'
-agentcoord activities --paths src/parser
-agentcoord evidence --paths src/parser
-```
+- `identity`: native binding, attribution limits and available capabilities.
+- `activity --task NAME --paths FOLDER --note TEXT`: one meaningful scope.
+  A native owner can begin newly named work after a completed task atomically.
+- `activity --state completed --evidence TEXT`: inherit recorded scope/note.
+  Different actual output paths can be described in evidence.
+- `activities`, `evidence`: retrieve relevant current work and intentional fixes.
+- `intent`: preserve one non-obvious settled fix during longer work; not every edit.
+- `checkpoint`, `complete`: explicit lifecycle/task boundaries. Pause and
+  scheduled resume consent are separate from starting new authorized work.
+- `delegate`: supported scoped routing, never child impersonation.
 
 ## Messages and boundary actions
 
-| Command | When to use it |
-| --- | --- |
-| `send` | Send a directed message when a peer needs to act on an authorized overlap, dependency or handoff. Use `--body-file` for literal multiline content. |
-| `sync` | Present a bounded action digest at a natural work boundary; not in a polling loop. |
-| `inbox` | Peek at pending work without presentation or handling when a specific inspection needs it. |
-| `message` | Read a selected message fully, following UTF-8 `next_offset` chunks. |
-| `message-batch` | Read up to 16 selected messages in one bounded call; `--byte-budget` accepts 4096..65536 bytes and `--body-limit` 4..32768 bytes. Follow `next_index` with the same IDs and each body's `next_offset`. Reads do not handle messages. |
-| `attachments` | Traverse all attachment metadata for that message with `--after`. |
-| `attachment` | Read the complete retained JSON reference in chunks; join `reference` strings before parsing it. |
-| `consume` | Explicitly mark one message handled after acting on its content. |
-| `consume-batch` | Mark selected handled messages and inspect each result for failures. |
-| `ack` | Record a requested receipt without creating an acknowledgment conversation; not for routine acknowledgments. |
-| `history` | Traverse relevant retained conversation history with its explicit cursor. |
-| `search` | Search retained conversations by text/scope without consuming anything. |
+```sh
+agentcoord send --recipients UUID --kind handoff --subject 'Parser ready' --body 'Escapes preserved; focused tests pass.'
+agentcoord send --recipients UUID --kind reply --subject 'Parser result' --body 'Integrated.' --reply-to MESSAGE_UUID
+agentcoord sync
+agentcoord consume-batch --ids HANDLED_UUID ANOTHER_HANDLED_UUID
+```
 
-Reading, presentation, requested receipt and handling never answer a decision or
-accept artifact readiness. `sync` previews at most three actions; full records
-and explicit continuation remain available. Do not turn a display limit into a
-limit on the work requested by the user.
+Ordinary directed sends request native attention automatically; no recipient
+presence check is needed. Add `--no-wake` only to deliberately quiet a message.
+Replies retain a server-verified original link and default conversation/scope;
+recipients remain explicit and context grants no authority.
 
-Activity discovery returns bounded previews; `evidence-detail --kind activity`
-retrieves exact notes/evidence and paginated paths. Follow `paths_after` with
-`--paths-after`. `evidence` returns recent completed `outcomes` newest first;
-`--outcomes-before` continues older outcomes. Evidence pages allow at most 20
-records per section. New activity scopes include advisory `scope_context` with
-no automatic peer messages or reservations.
-
-Do not use these commands for a small self-contained prose, Markdown, README,
-translation, fixture, snapshot or ordinary configuration edit. Routine text work
-is intentionally silent. Use them only for exact overlap, shared contracts or
-instructions, long-running work, blockers, handoffs, decisions or deliberate
-fix preservation.
+`sync` presents a bounded digest, default three actions, actor maximum twenty.
+Complete short message bodies need no extra fetch. An incomplete preview is not
+the whole instruction: use `message ID` or `message-batch --ids ID ...` and follow
+`next_offset` / `next_index` / cursors. `inbox` peeks; reads never mark handling.
+`consume` / `consume-batch` mark acted-on messages; `ack` is only a requested
+receipt. `history` and `search` retain imported history and old conversations.
+Attachment indexes and bodies have their own continuations.
 
 ## Dependency decisions
 
-| Command | When to use it |
-| --- | --- |
-| `request-find` | Find open decisions covering the real path dependency before creating a duplicate. |
-| `request` | Ask the responsible owner for one scoped blocking decision after existing evidence is insufficient. |
-| `requests` | Inspect actionable decisions and outgoing waits at a work boundary. |
-| `request-get` | Read the full selected request, response and exact stale-generation proposal. |
-| `request-follow` | Follow a covering decision's updates without acquiring answer or edit authority. |
-| `request-unfollow` | Stop following an obsolete dependency. |
-| `request-defer` | Defer the dependent slice while leaving the decision open and continuing independent work. |
-| `request-resolve` | Explicitly answer, decline or requester-cancel under the applicable authority. |
-| `request-reconcile` | Accept or reject the exact stale-generation answer proposal under current authority. |
-| `request-transfer` | Explicitly transfer a decision with current scoped authority and a reason. |
+`question --recipient UUID --subject TEXT --body TEXT --paths PATH` creates or
+reuses the exact current tracked question in one call. `request-find` /
+`request` remain available for deliberate discovery and explicit creation.
+Use `request-get`, `request-resolve`, `request-defer`, `request-follow` and
+`request-transfer` for their stated decision transitions. An answer, requester
+cancellation or authorized transfer is explicit; silence and elapsed time grant
+nothing. Continue independent work.
 
 ## Artifact readiness
 
-| Command | When to use it |
-| --- | --- |
-| `dependency subscribe` | Register a known producer/artifact dependency and the intended next action. |
-| `dependency cancel` | Cancel an obsolete subscription. |
-| `ready` | Publish the complete counterpart scope with paths, hashes and evidence after preparation. |
-| `handoff` | Publish readiness and a directed notification atomically. |
-| `ready-withdraw` | Explicitly withdraw obsolete readiness with a reason. |
-| `readiness` | Inspect the latest receipt against all observed inputs before integration. |
-| `dependency updates` | Inspect pending updates or explicit history without acceptance. |
-| `dependency accept` | Accept the reviewed current update after complete hash checks. |
-
-`--evidence` accepts literal text; `--evidence-json` accepts structured JSON.
-Evidence references are data, not commands for the service to execute. A receipt
-with `verified` status is a producer's claim; assess the cited checks yourself.
+`dependency wait --producer UUID --artifact NAME --paths FILE --next-action TEXT`
+atomically registers a subscription and checks existing readiness, then returns.
+It never blocks the model. Inspect any returned receipt and actual counterpart
+paths/hashes before acceptance. `dependency subscribe`, `dependency updates`,
+`readiness`, `ready` and `handoff` use the same records.
+Withdraw obsolete receipts and cancel obsolete subscriptions explicitly.
 
 ## Shared-checkout commits
 
-| Command | When to use it |
-| --- | --- |
-| `commit status` | Inspect admission without joining a queue. |
-| `commit execute` | Commit exact owned paths or a reviewed patch and full base through a private index. Definitely unsent requests fall back to local Git automatically; `--local` / MCP `local: true` selects it explicitly. |
-| `commit acquire` | Obtain a manual shared-index grant only when native execution cannot cover the required manual operation; inspect the actual granted receipt. |
-| `commit cancel` | Cancel an exact owned pending admission that has not been granted. |
-| `commit release` | Release the exact owned manual grant. |
-| `commit reconcile` | Inspect uncertain Git publication before another attempt. |
-
 ```sh
-agentcoord commit execute --paths src/parser/tokenize.py --message 'Fix escaped delimiters'
-agentcoord_patch_base=$(git rev-parse HEAD)
-# Prepare and review owned.patch against that captured base before continuing.
-agentcoord commit execute --paths src/parser/tokenize.py --patch-file .agent-work/parser-repair/owned.patch --base-commit "$agentcoord_patch_base" --message 'Fix escaped delimiters'
+agentcoord commit execute --paths src/parser.py --message 'Fix escape parsing'
+agentcoord commit execute --paths src/parser.py --patch-file /absolute/scratch/owned.patch --base-commit FULL_REVIEWED_BASE --message 'Fix escape parsing'
 ```
 
-Review the patch against its captured full base; do not use a newly sampled base
-after preparing it. The second example is for a patch prepared against the
-captured `HEAD`. The CLI hashes `--patch-file`; an inline `--patch` needs its exact
-`--patch-sha256`. `--adopt-staged` deliberately includes selected staged work;
-do not enable it to sweep up peer staging. `--bump-version` uses the repository's
-explicit configuration when required; this skill imposes no version policy.
-Commits do not run or wait for tests, and test execution never holds a grant.
-Local execution needs no native binding or service; it retains the same hooks,
-version configuration and staging protections. CLI diagnostics go to stderr;
-MCP returns `diagnostics` with the result. Retain the retry key: local receipts
-live under Git metadata and prevent duplicate publication after a lost response.
-An uncertain prior publication still requires inspecting actual Git evidence.
+Capture the full base before preparing the reviewed patch. The CLI snapshots and
+hashes external patch inputs; changed Git paths stay restricted to the checkout.
+Small UTF-8 snapshots use bounded inline submission; use explicit `--local` for
+larger/non-UTF8 snapshots. `--bump-version` follows configured repository policy;
+`--adopt-staged` is deliberate and never sweeps peer staging.
+
+`commit status` observes admission; `commit acquire` / `commit release` cover
+manual shared-index work with exact grants. `commit cancel` cancels a pending
+request. `commit reconcile` inspects a recorded uncertain effect without
+publishing another commit. Retain retry keys and inspect publication outcomes.
+
+## Runner resources
+
+CLI-only `resource status --provider NAME [--request-id ID]` reads a configured runner's JSON
+status. `resource event --provider NAME --event-file FILE --recipients UUID`
+forwards an explicit wait/admission/terminal event through ordinary authenticated
+messaging with a stable event key. The runner allocates resources and owns
+deadlines/cancellation; absent fields are unknown, not guessed. There is no
+second scheduler or automatic watcher. Host adapters can notify from their
+existing result invocation.
+
+Configure `[resources.providers.NAME]` with `argv` and optional
+`timeout_seconds` (1..30, default 10). An optional request ID is appended as one
+literal non-option argument. JSON status contains `request_id`, `resource`,
+`state`, `holder`, `queue_position`, `start_deadline` and `result`; unsupported
+fields use null. States are queued/running or passed/failed/cancelled/expired/
+error/superseded. Only terminal states carry a result object. An event file is
+`{"event_id":"stable-id","kind":"terminal","status":{...}}`; kinds wait,
+admitted and terminal must match the status. Output is bounded to 64 KiB and
+individual observations to 6 KiB.
 
 ## Scheduled work and durable effects
 
-| Command | When to use it |
-| --- | --- |
-| `schedule` | Schedule an authorized reminder or an explicitly enabled native resume. `--due-us` is an absolute Unix timestamp in microseconds. |
-| `jobs` | Inspect relevant scheduled work and uncertain effects. |
-| `job` | Inspect one exact job before cancellation or reconciliation. |
-| `cancel` | Cancel selected scheduled work; cancellation only signals owned launched process groups. |
-| `resolve` | Deliberately reconcile a scheduled job's exact version before optional retry. |
-| `receipt` | Retrieve the committed result for the actor's retained retry key after an uncertain response. |
-| `operation list` | Inspect the caller's durable effects and failures. |
-| `operation get` | Retrieve one exact operation receipt and verify terminal state. |
-| `operation ack` | Acknowledge an exact owned failed-operation version without retrying its effect. |
-| `operation reconcile` | Route an uncertain external effect to its domain's reconciliation. |
-
-Mutations expose `--key`; reuse the same key and payload after a transport
-timeout. Slow readiness/commit/reconciliation commands normally wait for a
-terminal receipt; `--no-wait` returns a durable queued ID and `--wait-timeout`
-bounds adapter waiting. A timeout or queued receipt is not completion. Inspect
-the operation rather than scheduling or publishing the effect a second time.
+Use `schedule`, `jobs`, `job`, `cancel` and `resolve` only for an authorized
+delayed reminder/resume or exact retained effect. Resume requires explicit user
+opt-in and supported verified offline native authority. A queued operation is
+not completion. `operation`, `operation-list` and `receipt` inspect actual
+effects; a stable key binds the original arguments/generations.
 
 ## Installation, lifecycle and operator maintenance
 
-These commands change or inspect infrastructure. Use them for a setup,
-diagnosis or maintenance task within the user's authorization, not as routine
-coding steps. Local configuration does not grant publishing or resume consent.
+`init` previews integration; `init --apply` writes managed resources while
+preserving unrelated settings. `doctor --live` separates configuration, service,
+binding and observed Channel registration. `service upgrade` previews the
+managed service transition; `service upgrade --apply` applies it.
 
-| Command | When to use it |
-| --- | --- |
-| `init` | Preview repository setup; `--apply` installs configuration/guidance and registers the exact workspace. `--candidate-dir` emits inert integration candidates for review. |
-| `serve` | Run the foreground service on Linux or macOS. |
-| `mcp` | Start the harness's configured stdio MCP adapter; not a replacement service or indexer. |
-| `hook` | Receive lifecycle JSON from a configured native hook, with a real harness/event and absolute originating workspace path. Do not fabricate events during ordinary work. |
-| `doctor` | Inspect configuration; `--live` additionally checks observed connectivity/binding/lifecycle. |
-| `monitor` | Open the read-only terminal operator view. It never consumes another actor's messages. |
-| `operator snapshot` | Inspect paged actors, actions and work without selecting a sender or consuming actions. |
-| `operator history` | Traverse the immutable workspace timeline with filters and explicit cursors. |
-| `service install` | Preview, or with `--apply` install/start the macOS workspace launchd service. |
-| `service status` | Inspect the managed installation separately from live health. |
-| `service health` | Inspect the running service's maintenance/health state. |
-| `service drain` | Explicitly fence new mutations and external starts, permit outcome inspection and wait for owned work before maintenance. |
-| `service activate` | Explicitly activate after completed maintenance/import verification. |
-| `service upgrade` | Preview, or with `--apply` replace the owned managed service after a safe drain. |
-| `service remove` | Preview, or with `--apply` remove the owned service after safe drain while retaining its database. |
-| `backup` | Make an offline backup under the exclusive service-ownership lock. |
-| `restore` | Restore offline without overwriting retained records. |
-| `migrate inspect` | Inspect specified source records and write a reviewable migration manifest. |
-| `migrate import` | Apply that manifest offline using a stable `--run-id` across interrupted retries; preserve provenance. |
-| `migrate verify` | Verify every mapped record and relationship before explicit activation. |
-
-Use global `--operator` for actor-free operator inspection where appropriate;
-operator mode cannot impersonate a native agent. Managed launchd actions require
-macOS; Linux uses `serve`. Service changes never force-kill user agent sessions.
+`monitor`, operator `snapshot` and `history` are read-only. Current views omit
+diagnostic-only children; all/history retains them. Carryover counts preserve
+earlier assignments and archived recipients; they are not automatic decisions.
+Backup/restore/migration and explicit service maintenance are exceptional
+operator actions; consult installed help and the relevant workflow.
 
 ## Native attention
 
-Ordinary `send` automatically requests attention through the
-recipient's native harness. Use it for a real actionable dependency
-or handoff, not ordinary progress. `--no-wake` (MCP `wake: false`) keeps a selected
-message quiet. Repository wake policy
-can enable recipients without per-agent setup calls. `wake configure --enabled`
-or `--no-enabled` overrides consent for your exact native execution.
-
-`wake_enabled` is a `[native]` repository configuration key, never a commit or
-message argument. MCP `wake_configure` takes `enabled`; `send` takes optional
-`wake`. If an old cached adapter rejects current configuration, use the installed
-CLI until a natural reconnect refreshes it; independent commits need no wake setup.
-
-`wake get --operation-id UUID` inspects an accepted wake receipt; it does not
-resend. `wake reconcile --operation-id UUID` can resolve uncertainty from explicit
-message handling, never from silence. Adapter unavailability leaves messages
-stored and independent work continues. Native delivery is not message handling.
-Do not keep checking a receipt or resend simply to make an agent respond.
+Use ordinary send. `wake get` inspects exact attention outcomes;
+`wake reconcile` resolves only supported evidence and sends nothing.
+`wake configure` is a current-execution preference, not offline resume consent.

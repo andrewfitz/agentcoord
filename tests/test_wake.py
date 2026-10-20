@@ -427,6 +427,7 @@ def test_assembled_daemon_delivers_to_real_mcp_receiver(runtime):
         sessions = [tx.connection.execute('SELECT native_session_id FROM actors WHERE id=?', (c.actor_id,)).fetchone()[0]
                     for c in contexts]
     with make_server(service) as server:
+        server.idle_timeout = 0.03
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
         try:
@@ -440,6 +441,12 @@ def test_assembled_daemon_delivers_to_real_mcp_receiver(runtime):
                         async with anyio.create_task_group() as group:
                             receiver = ChannelReceiver(recipient, writer, group)
                             await receiver.start()
+                            diagnostics = server.health()['wake']
+                            assert diagnostics['claude']['registered_current_channels'] == 1
+                            assert diagnostics['claude']['endpoint_socket_present_channels'] == 1
+                            assert diagnostics['host_activation'] == 'unknown'
+                            # No recipient tool calls during ordinary inactivity.
+                            await anyio.sleep(0.1)
                             reply = await anyio.to_thread.run_sync(lambda: sender.call('message.send', {
                                 'recipients': [contexts[1].actor_id], 'kind': 'handoff',
                                 'subject': 'Fix is ready', 'body': 'Preserve peer edits.'}, key=uid()))
@@ -475,3 +482,46 @@ def test_native_claude_channel_activation_is_explicit(monkeypatch, argv, expecte
 def test_native_argument_boundaries_are_read_from_kernel():
     argv = wake_adapters.native_argv(identity.process_identity(os.getpid()))
     assert argv and any('pytest' in item for item in argv)
+
+
+def test_channel_failed_registration_recovers_after_actual_bind_change(short_socket_dir):
+    async def exercise():
+        class Client:
+            binding_revision = (1, 'execution')
+            calls = 0
+            def call(self, *args, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {'ok': False, 'error': {'code': 'STORAGE_UNAVAILABLE'}}
+                return {'ok': True, 'data': {'path': str(short_socket_dir/'recovered.sock'), 'nonce': 'a'*64}}
+        client = Client()
+        writer, _ = anyio.create_memory_object_stream(4)
+        async with anyio.create_task_group() as group:
+            receiver = ChannelReceiver(client, writer, group)
+            await receiver.start()
+            await receiver.start(bound=True)
+            assert client.calls == 1
+            client.binding_revision = (2, 'execution')
+            await receiver.start(bound=True)
+            assert client.calls == 2 and receiver.path.exists()
+            await receiver.close()
+            group.cancel_scope.cancel()
+    anyio.run(exercise)
+
+
+def test_health_channel_registration_excludes_stale_generations(runtime):
+    from agentcoord.application import make_server
+    service, contexts = runtime
+    native = {'harness': 'claude', 'process_identity': identity.process_identity(os.getpid())}
+    with service.store.read() as tx:
+        native['native_session_id'] = tx.connection.execute('SELECT native_session_id FROM actors WHERE id=?',
+                                                           (contexts[1].actor_id,)).fetchone()[0]
+    with make_server(service) as server:
+        channel = identity.bind_native(service.store, native, transport='mcp')['context']
+        call(service, channel, 'wake.channel', {})
+        observed = server.health()['wake']['claude']
+        assert observed['registered_current_channels'] == 1
+        assert observed['endpoint_socket_present_channels'] == 0
+        with service.store.write() as tx:
+            tx.connection.execute('UPDATE actors SET current_execution_generation=NULL WHERE id=?', (contexts[1].actor_id,))
+        assert server.health()['wake']['claude']['registered_current_channels'] == 0

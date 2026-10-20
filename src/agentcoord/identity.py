@@ -108,15 +108,15 @@ def require_generation(tx, actor_id, expected_task, expected_execution=UNSET) ->
     return actor
 
 
-def assign_task(tx, context: Context, task: str) -> dict:
+def assign_task(tx, context: Context, task: str, *, begin_completed: bool = False) -> dict:
     task = bounded_text(task, "task", 1024)
     actor = actor_for_context(tx, context)
     if context.identity_mode == "shared_group":
         raise CoordinationError("NOT_AUTHORIZED", "Shared reports cannot reassign native group work")
     if actor["task"] == task:
         return actor
-    if actor["reported_state"] in {"paused", "completed"}:
-        raise CoordinationError("NOT_AUTHORIZED", "Explicitly resume paused/completed work before reassignment")
+    if actor["reported_state"] == "paused" or (actor["reported_state"] == "completed" and not begin_completed):
+        raise CoordinationError("NOT_AUTHORIZED", "Paused work requires explicit resume; completed work can begin a newly named task with activity --task NAME --state working --note NOTE")
     if tx.connection.execute("SELECT 1 FROM operations WHERE actor_id=? AND state IN ('running','uncertain') AND kind NOT IN ('message.wake','wake.reconcile') LIMIT 1",
                              (actor["id"],)).fetchone():
         raise CoordinationError("RECONCILIATION_REQUIRED", "Reconcile own external operations before reassignment")
@@ -516,7 +516,11 @@ def _get(service, context, arguments, tx):
     validate_fields(arguments, set())
     actor = actor_for_context(tx, context)
     return {"workspace_id": context.workspace_id, "actor": _actor_view(actor), "identity_mode": context.identity_mode,
-            "separately_addressable_children": context.identity_mode == "native_child"}
+            "separately_addressable_children": context.identity_mode == "native_child",
+            "capabilities": {"native_commit": context.identity_mode != "shared_group",
+                             "begin_completed_task": context.identity_mode == "native_owner"},
+            "commit_guidance": ("Use the independently bound native-owner CLI for commit execute; use --local with the same reviewed arguments when native binding is unavailable."
+                                if context.identity_mode == "shared_group" else None)}
 
 
 def _status(service, context, arguments, tx):

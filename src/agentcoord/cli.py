@@ -9,6 +9,7 @@ import math
 import os
 import secrets
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -138,7 +139,7 @@ CATALOG = (
         "work.activity",
         "activity",
         "activity",
-        "Report new work, a changed scope, a blocker or an outcome once.",
+        "Report new work, a changed scope, a blocker or an outcome once. Completion inherits omitted paths and note; actual outputs belong in evidence. Explicit new task with working state begins from completed native-owner work.",
         {
             "task": {"type": "string", "maxLength": 256},
             "paths": {
@@ -253,6 +254,7 @@ CATALOG = (
             "kind": {"type": "string", "maxLength": 40},
             "subject": {"type": "string", "maxLength": 1024},
             "body": {"type": "string", "maxLength": 65536},
+            "reply_to": ID,
             "thread": {"type": "string", "maxLength": 256},
             "paths": {
                 "type": "array",
@@ -447,7 +449,7 @@ CATALOG = (
         "sync",
         "sync",
         "Present a bounded action digest at a natural work boundary.",
-        {"limit": {**LIMIT, "maximum": 3}, "cursor": TEXT, "new_only": BOOL},
+        {"limit": {**LIMIT, "maximum": 20, "default": 3}, "cursor": TEXT, "new_only": BOOL},
         (),
         True,
     ),
@@ -789,7 +791,7 @@ CATALOG = (
             "bump_version": BOOL,
             "local": BOOL,
             "adopt_staged": BOOL,
-            "patch": TEXT,
+            "patch": {**TEXT, "maxLength": 16 * 1024 * 1024},
             "patch_file": TEXT,
             "patch_sha256": {**TEXT, "minLength": 64, "maxLength": 64},
             "base_commit": TEXT,
@@ -956,6 +958,15 @@ CATALOG = (
     ),
 )
 
+CATALOG += tuple(
+    CommandSpec(operation, tuple(command.split()), tool, description,
+                next(spec for spec in CATALOG if spec.operation == source).properties,
+                next(spec for spec in CATALOG if spec.operation == source).required, True)
+    for operation, command, tool, description, source in (
+        ("decision.question", "question", "question", "Ask one tracked question, reusing an exact covering request when safe.", "decision.request"),
+        ("readiness.wait", "dependency wait", "dependency_wait", "Inspect readiness and register interest atomically; returns immediately.", "readiness.subscribe"),
+    )
+)
 BY_OPERATION = {spec.operation: spec for spec in CATALOG}
 BY_TOOL = {spec.tool: spec for spec in CATALOG}
 
@@ -1023,7 +1034,10 @@ def _validate_value(schema, value, name):
     if "enum" in schema:
         invalid |= value not in schema["enum"]
     if invalid:
-        raise CoordinationError("INVALID_ARGUMENT", f"Invalid {name}")
+        details = (f"integer between {schema.get('minimum', -(2**63))} and {schema.get('maximum', 2**63 - 1)}"
+                   if kind == "integer" else f"one of {', '.join(map(str, schema['enum']))}"
+                   if "enum" in schema else f"{kind or 'valid value'} matching the command schema")
+        raise CoordinationError("INVALID_ARGUMENT", f"Invalid {name}: expected {details}")
 
 
 def _json_argument(value):
@@ -1120,6 +1134,16 @@ def parser():
                 opts["type"] = _json_argument
             if "enum" in schema:
                 opts["choices"] = schema["enum"]
+            id_fields = [field for field, definition in spec.properties.items()
+                         if definition.get("format") == "uuid"]
+            id_alias = (name == "id" or name.endswith("_id")) and id_fields == [name]
+            if positional and id_alias:
+                opts["nargs"] = "?"
+                opts["default"] = argparse.SUPPRESS
+                command.add_argument("--id", dest=name, default=argparse.SUPPRESS)
+            elif id_alias and name != "id":
+                command.add_argument(option, "--id", **opts)
+                continue
             command.add_argument(option, **opts)
             if not schema and name == "evidence":
                 command.add_argument(
@@ -1136,6 +1160,17 @@ def parser():
                     default=argparse.SUPPRESS,
                     help=f"Read literal UTF-8 {field} from a file",
                 )
+    resource = groups[()].add_parser("resource")
+    resource_commands = resource.add_subparsers(dest="resource_command", required=True)
+    status = resource_commands.add_parser("status", help="Query the configured runner's authoritative resource status")
+    status.set_defaults(maintenance="resource")
+    status.add_argument("--provider", required=True)
+    status.add_argument("--request-id", help="Pass one runner request ID as a plain argument")
+    event = resource_commands.add_parser("event", help="Send one runner resource event through existing directed messaging")
+    event.set_defaults(maintenance="resource")
+    event.add_argument("--provider", required=True)
+    event.add_argument("--event-file", type=Path, required=True)
+    event.add_argument("--recipients", nargs="+", required=True)
     for name in ("init", "serve", "mcp", "monitor", "doctor", "backup", "restore", "hook"):
         command = groups[()].add_parser(name)
         command.set_defaults(maintenance=name)
@@ -1187,7 +1222,7 @@ def _commit_report(message):
     sys.stderr.write(f"agentcoord commit: {message}\n")
 
 
-def _local_commit(workspace, arguments, key, *, report=None, reason=None):
+def _local_commit(workspace, arguments, key, *, report=None, reason=None, patch_bytes=None):
     from . import local_commits
 
     diagnostics = []
@@ -1199,7 +1234,7 @@ def _local_commit(workspace, arguments, key, *, report=None, reason=None):
 
     emit(reason or "Using local Git; the coordination service is not required.")
     emit(f"Selected {len(arguments['paths'])} exact paths; peer staging and Git hooks stay intact.")
-    result = local_commits.execute(workspace, arguments, key=key, report=emit)
+    result = local_commits.execute(workspace, arguments, key=key, report=emit, patch_bytes=patch_bytes)
     result["diagnostics"] = diagnostics
     if reason:
         result["fallback_reason"] = reason
@@ -1210,6 +1245,8 @@ def _commit_guidance(envelope, workspace, arguments, key):
     if envelope.get("ok") or workspace is None:
         return envelope
     error = envelope.setdefault("error", {})
+    if error.get("code") == "NOT_AUTHORIZED" and "native-owner CLI" in error.get("message", ""):
+        error.setdefault("details", {})["native_owner_cli"] = "Run the same commit execute arguments from the independently bound native-owner CLI; use --local if native binding is unavailable."
     if error.get("code") not in {"STORAGE_UNAVAILABLE", "UNBOUND_ACTOR", "SERVICE_BUSY",
                                  "RECONCILIATION_REQUIRED", "PROTOCOL_MISMATCH", "NOT_FOUND"}:
         return envelope
@@ -1267,7 +1304,7 @@ def invoke(client, spec, arguments, *, context_guards=None, workspace=None, repo
     return result
 
 
-def _execute_commit_cli(args, workspace, arguments, factory, origin):
+def _execute_commit_cli(args, workspace, arguments, factory, origin, *, patch_bytes=None):
     validate_arguments(args.spec, arguments)
     key = arguments.setdefault("key", secrets.token_hex(16))
     if arguments.get("local") or workspace.id is None:
@@ -1275,7 +1312,7 @@ def _execute_commit_cli(args, workspace, arguments, factory, origin):
             raise CoordinationError("INVALID_ARGUMENT", "Local Git cannot impersonate a captured native origin")
         selected = {k: v for k, v in arguments.items() if k not in {"key", "local"}}
         return _local_commit(workspace, selected, key, report=_commit_report,
-                             reason="Git repository is unregistered; using local Git without a native identity." if workspace.id is None else None)
+                             reason="Git repository is unregistered; using local Git without a native identity." if workspace.id is None else None, patch_bytes=patch_bytes)
     invoked = False
     try:
         from .config import load_config
@@ -1392,34 +1429,33 @@ def _validate_wait_timeout(timeout):
 
 
 def prepare_patch_file(workspace, filename):
-    filename = Path(filename)
-    candidate = filename if filename.is_absolute() else workspace.root / filename
+    """Capture reviewed input once; its location grants no changed-path authority."""
+    candidate = Path(filename)
+    if not candidate.is_absolute():
+        candidate = workspace.root / candidate
+    if ".." in candidate.parts:
+        raise CoordinationError("INVALID_ARGUMENT", "Patch input path must not contain parent segments")
+    directory = None
     try:
-        relative = candidate.relative_to(workspace.root)
-    except ValueError as exc:
-        raise CoordinationError(
-            "INVALID_ARGUMENT", "Patch artifact must be inside the selected workspace"
-        ) from exc
-    current = workspace.root
-    for part in relative.parts:
-        if part in {".", ".."}:
-            raise CoordinationError("INVALID_ARGUMENT", "Patch artifact path must be normalized")
-        current /= part
-        if current.is_symlink():
-            raise CoordinationError("INVALID_ARGUMENT", "Patch artifact must not contain symlinks")
-    if not candidate.is_file() or candidate.stat().st_size > 16 * 1024 * 1024:
-        raise CoordinationError(
-            "INVALID_ARGUMENT", "Patch artifact must be a regular file no larger than 16 MiB"
-        )
-    digest = hashlib.sha256()
-    with candidate.open("rb") as stream:
-        total = 0
-        while chunk := stream.read(65536):
-            total += len(chunk)
-            if total > 16 * 1024 * 1024:
-                raise CoordinationError("INVALID_ARGUMENT", "Patch artifact grew beyond 16 MiB")
-            digest.update(chunk)
-    return {"patch_file": relative.as_posix(), "patch_sha256": digest.hexdigest()}
+        directory = os.open(candidate.anchor, os.O_RDONLY | os.O_DIRECTORY)
+        for part in candidate.parts[1:-1]:
+            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            os.close(directory)
+            directory = following
+        descriptor = os.open(candidate.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or not 0 < info.st_size <= 16 * 1024 * 1024:
+                raise CoordinationError("INVALID_ARGUMENT", "Patch input must be a regular file of 1 byte to 16 MiB")
+            content = stream.read(16 * 1024 * 1024 + 1)
+    except OSError as exc:
+        raise CoordinationError("INVALID_ARGUMENT", "Patch input must be a readable regular file without symlinks") from exc
+    finally:
+        if directory is not None:
+            os.close(directory)
+    if not 0 < len(content) <= 16 * 1024 * 1024:
+        raise CoordinationError("INVALID_ARGUMENT", "Patch input must contain 1 byte to 16 MiB")
+    return {"patch_bytes": content, "patch_sha256": hashlib.sha256(content).hexdigest()}
 
 
 def _read_text_file(path):
@@ -1663,13 +1699,51 @@ def _write_hook_error(error):
     sys.stderr.write(diagnostic[:4096] + "\n")
 
 
+def _normalize_cli_argv(argv):
+    """Move project options without interpreting literal option values."""
+    values = list(sys.argv[1:] if argv is None else argv)
+    scalar_options = set()
+
+    def collect(command):
+        for action in command._actions:
+            if action.option_strings and action.nargs not in (0, "+", "*"):
+                scalar_options.update(action.option_strings)
+            if isinstance(action, argparse._SubParsersAction):
+                for child in action.choices.values():
+                    collect(child)
+
+    collect(parser())
+    project, remaining = [], []
+    index = 0
+    while index < len(values):
+        token = values[index]
+        if token == "--":
+            remaining.extend(values[index:])
+            break
+        if token == "--project" and index + 1 < len(values) and values[index + 1] != "--":
+            project.extend(values[index:index + 2])
+            index += 2
+        elif token.startswith("--project="):
+            project.append(token)
+            index += 1
+        else:
+            remaining.append(token)
+            index += 1
+            if token in scalar_options and index < len(values) and values[index] != "--":
+                remaining.append(values[index])
+                index += 1
+    return project + remaining
+
+
 def main(argv=None, *, client_factory=None):
-    args = parser().parse_args(argv)
+    args = parser().parse_args(_normalize_cli_argv(argv))
     try:
         from .config import discover_workspace
 
         origin = _origin_context(args.origin_context)
-        if origin is not None and (args.operator or getattr(args, "maintenance", None)):
+        resource_event = (getattr(args, "maintenance", None) == "resource"
+                          and getattr(args, "resource_command", None) == "event")
+        if origin is not None and (args.operator or (getattr(args, "maintenance", None) and not resource_event)):
             raise CoordinationError("INVALID_ARGUMENT", "Origin context requires a native actor operation")
         if getattr(args, "maintenance", None) == "init":
             result = _maintenance(args, None)
@@ -1680,7 +1754,28 @@ def main(argv=None, *, client_factory=None):
                          else discover_workspace(explicit_root=args.root))
         if origin is not None and workspace.id != origin["workspace_id"]:
             raise CoordinationError("WRONG_WORKSPACE", "Origin context belongs to another workspace")
-        if getattr(args, "maintenance", None) and args.maintenance != "init":
+        if getattr(args, "maintenance", None) == "resource":
+            from .config import load_config
+            from .resource_provider import event_message, query_status
+            config = load_config(workspace)
+            provider = config.resource_providers.get(args.provider)
+            if provider is None:
+                raise CoordinationError("INVALID_ARGUMENT", "provider must name a configured resources.providers entry")
+            if args.resource_command == "status":
+                result = {"ok": True, "data": query_status(provider, cwd=workspace.root, request_id=args.request_id)}
+            else:
+                try:
+                    event = json.loads(_read_text_file(args.event_file))
+                except ValueError as exc:
+                    raise CoordinationError("INVALID_ARGUMENT", "event-file must contain one valid JSON resource event") from exc
+                message = event_message(args.provider, event, args.recipients)
+                context = native_context(args.harness, executable_paths=config.native_executables)
+                with (client_factory or Client)(workspace.socket_path, context, workspace_id=workspace.id, transport="cli") as client:
+                    guards = _origin_guards(client, origin)
+                    result = invoke(client, BY_OPERATION["message.send"],
+                                    dict(message["params"], key=message["key"]),
+                                    context_guards=guards)
+        elif getattr(args, "maintenance", None) and args.maintenance != "init":
             result = _maintenance(args, workspace)
         elif not getattr(args, "maintenance", None):
             if hasattr(args, "wait_timeout"):
@@ -1704,6 +1799,7 @@ def main(argv=None, *, client_factory=None):
                             "INVALID_ARGUMENT", f"Choose --{field} or --{field}-file"
                         )
                     arguments[field] = _read_text_file(file)
+            patch_bytes = None
             if args.spec.operation == "commit.execute" and arguments.get("patch_file"):
                 artifact = prepare_patch_file(workspace, arguments["patch_file"])
                 if (
@@ -1713,10 +1809,22 @@ def main(argv=None, *, client_factory=None):
                     raise CoordinationError(
                         "INVALID_ARGUMENT", "Patch artifact does not match the supplied hash"
                     )
-                arguments.update(artifact)
+                arguments.pop("patch_file")
+                arguments.pop("patch_sha256", None)
+                snapshot = artifact["patch_bytes"]
+                if "patch" in arguments:
+                    raise CoordinationError("INVALID_ARGUMENT", "Choose --patch or --patch-file")
+                if not arguments.get("local") and workspace.id is not None:
+                    try:
+                        arguments["patch"] = snapshot.decode("utf-8")
+                        encode_frame({"arguments": arguments, "frame_overhead_reserve": " " * 4096})
+                    except (UnicodeDecodeError, CoordinationError) as exc:
+                        raise CoordinationError("INVALID_ARGUMENT", "Patch input cannot fit the native inline frame; use the same reviewed input with --local") from exc
+                else:
+                    patch_bytes = snapshot
             factory = client_factory or Client
             if args.spec.operation == "commit.execute":
-                result = _execute_commit_cli(args, workspace, arguments, factory, origin)
+                result = _execute_commit_cli(args, workspace, arguments, factory, origin, patch_bytes=patch_bytes)
             else:
                 from .config import load_config
 

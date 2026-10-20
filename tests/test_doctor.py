@@ -215,3 +215,33 @@ def test_unsupported_cursor_hook_schema_is_invalid_even_with_complete_events(wor
     value["version"] = version
     path.write_text(json.dumps(value))
     assert doctor.harness_configuration(workspace.root, "cursor")["lifecycle"]["state"] == "invalid"
+
+
+def test_wake_registration_endpoint_and_delivery_are_separate_live_facts(workspace):
+    configure(workspace, "claude")
+    wake = {
+        "claude": {"registered_current_channels": 2, "endpoint_socket_present_channels": 1},
+    }
+    class Service:
+        calls = 0
+        def health(self):
+            self.calls += 1
+            return {"ok": True, "data": {"workspace_id": workspace.id, "protocol": 1, "wake": wake}}
+    service = Service()
+    report = doctor.inspect(workspace, client=service, live=True)
+    assert service.calls == 1
+    assert next(row for row in report["configuration"] if row["harness"] == "claude")["configured"]
+    assert report["wake"]["state"] == "observed"
+    assert report["wake"]["claude"] == wake["claude"]
+    assert report["wake"]["host_activation"] == "unknown"
+    assert "result.delivery" in report["wake"]["delivery_evidence"]
+    assert "consumption" in report["wake"]["delivery_evidence"]
+    assert "natural successful MCP tool binding" in report["wake"]["reconnect"]
+
+
+def test_configured_mcp_alone_does_not_prove_wake_registration(workspace):
+    configure(workspace, "claude")
+    report = doctor.inspect(workspace)
+    assert report["wake"]["state"] == "not_checked"
+    assert report["wake"]["host_activation"] == "unknown"
+    assert "claude" not in report["wake"]

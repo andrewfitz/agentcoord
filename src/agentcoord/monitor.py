@@ -90,7 +90,7 @@ def rows(data: dict, tab: int, *, now_us: int | None = None) -> list[dict]:
             result.append({"kind": item.get("kind", "action"), "id": item["id"], "item": item,
                            "text": f"{item.get('kind', 'action')} {item.get('summary', item.get('subject', ''))}  {item.get('next_action', '')}"})
     elif tab == 2:
-        for category in ("activities", "readiness", "jobs", "failures"):
+        for category in ("activities", "decisions", "readiness", "jobs", "failures"):
             for item in _items(data.get(category, [])):
                 result.append({"kind": category.rstrip("s"), "id": item["id"], "item": item,
                                "text": f"{category}: {item.get('state', item.get('status', ''))} {item.get('task', item.get('artifact', ''))} {item.get('note', item.get('error', ''))}"})

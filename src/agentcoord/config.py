@@ -51,6 +51,7 @@ class VersionRule:
 @dataclass(frozen=True)
 class Config:
     version: VersionRule | None = None
+    resource_providers: dict[str, dict] = field(default_factory=dict)
     fast_workers: int = 16
     fast_queue: int = 128
     slow_workers: int = 4
@@ -226,8 +227,18 @@ def load_config(workspace: Workspace) -> Config:
             data = tomllib.loads(raw.decode("utf-8"))
     except (OSError, ValueError, UnicodeError) as error:
         raise CoordinationError("INVALID_ARGUMENT", "Configuration is invalid TOML") from error
-    validate_fields(data, {"version", "limits", "native", "storage"})
+    validate_fields(data, {"version", "limits", "native", "storage", "resources"})
     values = {}
+    resources = data.get("resources", {})
+    validate_fields(resources, {"providers"})
+    providers = resources.get("providers", {})
+    if not isinstance(providers, dict) or len(providers) > 16:
+        raise CoordinationError("INVALID_ARGUMENT", "Resource providers must be an object with at most 16 entries")
+    from .resource_provider import validate_provider
+    values["resource_providers"] = {
+        bounded_text(name, "resource provider name", 128): validate_provider(provider)
+        for name, provider in providers.items()
+    }
     limits = data.get("limits", {})
     validate_fields(limits, {"fast_workers", "fast_queue", "slow_workers", "slow_queue", "frame_bytes", "action_bytes", "jobs_log_max_bytes"})
     for name, value in limits.items():

@@ -206,7 +206,7 @@ def snapshot(service, context, arguments, tx):
         if set(cursor) != {"query", "positions"} or not isinstance(cursor["positions"], dict):
             raise CoordinationError("INVALID_ARGUMENT", "Invalid snapshot cursor")
         positions = cursor["positions"]
-        if set(positions) - {"actors", "activities", "readiness", "jobs", "failures", "actions"}:
+        if set(positions) - {"actors", "activities", "readiness", "jobs", "failures", "decisions", "actions"}:
             raise CoordinationError("INVALID_ARGUMENT", "Unknown snapshot cursor sections")
         if any(value is not None and (not isinstance(value, str) or len(value) > 8192) for value in positions.values()):
             raise CoordinationError("INVALID_ARGUMENT", "Invalid snapshot cursor positions")
@@ -216,6 +216,9 @@ def snapshot(service, context, arguments, tx):
         clauses, values = _actor_conditions(filters, "a.id")
         if view == "current":
             clauses.append("a.archived=0")
+            clauses.append("""(a.child_id='' OR a.current_execution_generation IS NOT NULL
+                OR EXISTS(SELECT 1 FROM current_activity ca JOIN activities aw ON aw.id=ca.activity_id
+                    WHERE ca.actor_id=a.id AND aw.task_generation=a.current_task_generation))""")
         actors, page = _page(tx, table="actors a", select="a.id AS page_key,a.id,a.label,a.harness,a.reported_state,a.archived,t.task,p.observed_state,p.observed_us,ac.created_us AS activity_us",
                             joins="LEFT JOIN assignments t ON t.generation=a.current_task_generation LEFT JOIN presence p ON p.actor_id=a.id LEFT JOIN current_activity ca ON ca.actor_id=a.id LEFT JOIN activities ac ON ac.id=ca.activity_id",
                             clauses=clauses, values=values, key="a.id", position=positions.get("actors"), limit=limit, fingerprint=fingerprint, section="actors")
@@ -224,7 +227,10 @@ def snapshot(service, context, arguments, tx):
             actor["observed_state"] = actor["observed_state"] or "unknown"
         output["actors"], pages["actors"] = actors, page
         output["counts"]["actors"] = page["total"]
-        output["counts"]["current_actors"] = tx.connection.execute("SELECT COUNT(*) FROM actors WHERE archived=0").fetchone()[0]
+        output["counts"]["current_actors"] = tx.connection.execute("""SELECT COUNT(*) FROM actors a WHERE archived=0 AND
+            (a.child_id='' OR a.current_execution_generation IS NOT NULL OR EXISTS
+            (SELECT 1 FROM current_activity ca JOIN activities aw ON aw.id=ca.activity_id
+             WHERE ca.actor_id=a.id AND aw.task_generation=a.current_task_generation))""").fetchone()[0]
         output["counts"]["historical_actors"] = tx.connection.execute("SELECT COUNT(*) FROM actors WHERE archived=1").fetchone()[0]
     if section in {"all", "actions"}:
         # The application's one canonical pending composer owns coalescing and semantics.
@@ -266,6 +272,44 @@ def snapshot(service, context, arguments, tx):
                 item.pop("page_key")
             output[name], pages[name] = items, page
             output["counts"][name] = page["total"]
+    if section in {"all", "actions", "work"}:
+        # Report retained obligations, including obsolete assignments, without
+        # consuming them or silently transferring them to a new owner.
+        clauses, values = _actor_conditions({k: v for k, v in filters.items() if k == "actor_id"}, "a.id")
+        if "task" in filters:
+            clauses.append("""(m.thread=? OR EXISTS (SELECT 1 FROM assignments ca WHERE
+                ca.generation IN (m.sender_task_generation,r.recipient_task_generation) AND ca.task=?))""")
+            values.extend([filters["task"]] * 2)
+        if "path" in filters:
+            clause, scoped = _scope("cp", "message_paths", "message_id", "m.id", filters["path"])
+            clauses.append(clause)
+            values.extend(scoped)
+        carry = tx.connection.execute("""SELECT CASE
+            WHEN upper(m.kind)='HISTORY' THEN 'imported_history'
+            WHEN a.archived=1 THEN 'archived_recipient'
+            WHEN r.recipient_task_generation!=a.current_task_generation THEN 'previous_assignment'
+            ELSE 'current_assignment' END AS reason,COUNT(*) AS deliveries
+            FROM recipients r JOIN messages m ON m.id=r.message_id JOIN actors a ON a.id=r.actor_id
+            WHERE r.handled_us IS NULL""" + (" AND " + " AND ".join(clauses) if clauses else "") +
+            " GROUP BY reason", values).fetchall()
+        output["carryover"] = {row["reason"]: row["deliveries"] for row in carry}
+        if tx.connection.execute("SELECT 1 FROM sqlite_master WHERE name='decisions' AND type='table'").fetchone():
+            clauses, values = _actor_conditions({k: v for k, v in filters.items() if k == "actor_id"}, "w.recipient_id")
+            if "task" in filters:
+                clauses.append("w.task=?")
+                values.append(filters["task"])
+            if "path" in filters:
+                clause, scoped = _scope("dp", "decision_paths", "decision_id", "w.id", filters["path"])
+                clauses.append(clause)
+                values.extend(scoped)
+            clauses.append("w.state='open'")
+            items, page = _page(tx, table="decisions w", select="w.id AS page_key,w.id,w.sender_id,w.recipient_id,w.subject,w.state,w.routing_state,w.deadline_us,w.sequence",
+                clauses=clauses, values=values, key="w.id", position=positions.get("decisions"), limit=limit,
+                fingerprint=fingerprint, section="decisions")
+            for item in items:
+                item.pop("page_key")
+            output["decisions"], pages["decisions"] = items, page
+            output["counts"]["decisions"] = page["total"]
     next_positions = {name: page["position"] for name, page in pages.items()}
     output["pages"] = {name: {"total": page["total"], "more": bool(page["position"])} for name, page in pages.items()}
     output["cursor"] = _encode({"query": fingerprint, "positions": next_positions}) if any(bool(value) for value in next_positions.values()) else None

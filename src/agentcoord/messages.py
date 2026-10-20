@@ -294,8 +294,8 @@ def _pending_query(tx, context, *, new_only=False, filters=None, exclude_domain_
     columns = "COUNT(DISTINCT m.id)" if count else """m.id,m.kind,m.subject,m.sender_id,m.thread,m.body_bytes,m.sequence,m.created_us,
         MIN(r.actor_id) AS actor_id,COUNT(*) AS recipient_count,
         CASE WHEN SUM(r.presented_us IS NULL)>0 THEN NULL ELSE MIN(r.presented_us) END AS presented_us,
-        substr(CAST(m.body_utf8 AS TEXT),1,360) AS summary"""
-    sql = f"SELECT {columns} FROM recipients r JOIN messages m ON m.id=r.message_id WHERE r.handled_us IS NULL"
+        substr(CAST(m.body_utf8 AS TEXT),1,720) AS summary"""
+    sql = f"SELECT {columns} FROM recipients r JOIN messages m ON m.id=r.message_id WHERE r.handled_us IS NULL AND upper(m.kind)!='HISTORY'"
     args = []
     if not context.operator:
         sql += " AND r.actor_id=?"
@@ -372,9 +372,22 @@ def consume_message(tx, context, message_id, *, acknowledge=False):
 
 
 def _send(service, context, args, tx):
-    fields(args, {"recipients", "kind", "subject", "body", "thread", "paths", "context", "requested_ack", "wake"},
+    fields(args, {"recipients", "kind", "subject", "body", "thread", "paths", "context", "requested_ack", "wake", "reply_to"},
            {"recipients", "kind", "subject", "body"})
     service.require_actor(tx, context)
+    args = dict(args)
+    if "reply_to" in args:
+        original = _visible(tx, context, args["reply_to"])
+        args.setdefault("thread", original["thread"] or f"message:{original['id']}")
+        args.setdefault("paths", [row[0] for row in tx.connection.execute(
+            "SELECT path FROM message_paths WHERE message_id=? ORDER BY path", (original["id"],))])
+        # Conversation metadata is data, never permission or approval authority.
+        metadata = args.get("context", json.loads(original["context_json"]))
+        if not isinstance(metadata, dict):
+            _error("Message context must be a JSON object")
+        args["context"] = {**metadata, "reply_to": original["id"]}
+    elif isinstance(args.get("context"), dict) and "reply_to" in args["context"]:
+        _error("context.reply_to is server-derived; use reply_to with a visible message ID")
     if type(args.get("wake", True)) is not bool:
         _error("wake must be boolean")
     result = append_message(tx, context, recipient_ids=args["recipients"], kind=args["kind"], subject=args["subject"],

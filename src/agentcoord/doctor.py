@@ -164,7 +164,11 @@ def inspect(workspace, *, client=None, live: bool = False, root: Path | None = N
     report = {"workspace_id": workspace.id, "root": str(root), "installed_release": installed,
               "configuration": [], "connection": {"state": "not_checked"},
               "binding": {"state": "not_checked"}, "database": {"state": "not_checked"},
-              "observed": {"state": "not_checked"}, "issues": [], "status": "needs_verification"}
+              "observed": {"state": "not_checked"},
+              "wake": {"state": "not_checked", "host_activation": "unknown",
+                       "delivery_evidence": "Worker success does not prove native delivery; inspect wake result.delivery. Only recipient consumption proves handling.",
+                       "reconnect": "Idle service restart requires a natural successful MCP tool binding to restore the Channel."},
+              "issues": [], "status": "needs_verification"}
     for harness in HARNESSES:
         config = harness_configuration(root, harness)
         report["configuration"].append({"harness": harness, **config})
@@ -192,11 +196,17 @@ def inspect(workspace, *, client=None, live: bool = False, root: Path | None = N
                         report["binding"] = health["binding"]
                     if health.get("observed") is not None:
                         report["observed"] = health["observed"]
+                    if isinstance(health.get("wake"), dict):
+                        report["wake"].update(health["wake"])
+                        report["wake"]["state"] = "observed"
+                        # Registration and endpoint existence do not establish
+                        # that the harness accepted or handled a notification.
+                        report["wake"]["host_activation"] = "unknown"
             except (OSError, TimeoutError, ValueError, KeyError, TypeError):
                 report["connection"] = {"state": "unavailable"}
                 report["issues"].append({"code": "SERVICE_UNAVAILABLE", "next_action": "Inspect the owned service and its private logs; retry the same operation key after an uncertain mutation."})
     configured = sum(item["configured"] for item in report["configuration"])
-    report["summary"] = f"{configured}/4 MCP configurations registered; connection, binding and lifecycle observations are separate evidence."
+    report["summary"] = f"{configured}/4 MCP configurations registered; configuration, connection, channel registration, native delivery and message handling are separate evidence."
     if not report["issues"]:
         report["status"] = "configured" if not live else "reachable"
     return report
